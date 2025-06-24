@@ -9,7 +9,7 @@ import SwiftData
 import Speech
 import Combine
 import Foundation
-import VoxMind
+
 import Translation
 
 // 主题管理类
@@ -173,6 +173,8 @@ class APIManager: ObservableObject {
 struct SettingsView: View {
     @ObservedObject var themeManager: ThemeManager
     @ObservedObject var apiManager: APIManager
+    @State private var limitlessAPIKey: String = UserDefaults.standard.string(forKey: "LimitlessAIAPIKey") ?? ""
+    @State private var limitlessSaveStatus: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -257,6 +259,26 @@ struct SettingsView: View {
                         .cornerRadius(12)
                     }
                     .padding(.vertical, 4)
+                }
+                // 新增 Limitless.AI 设置
+                Section("挂件 Limitless.AI 设置") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("请输入 Limitless.AI API Key", text: $limitlessAPIKey)
+                            .textFieldStyle(.roundedBorder)
+                        Button("保存") {
+                            UserDefaults.standard.set(limitlessAPIKey, forKey: "LimitlessAIAPIKey")
+                            limitlessSaveStatus = "已保存"
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
+                        if !limitlessSaveStatus.isEmpty {
+                            Text(limitlessSaveStatus)
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+                    }
                 }
             }
         }
@@ -482,6 +504,171 @@ struct RecordView: View {
         }
     }
     
+    private struct LanguageSettingsView: View {
+        @Binding var selectedInputLanguage: StoryDetailView.LanguageOption
+        @Binding var selectedTargetLanguage: StoryDetailView.LanguageOption
+        var supportedLanguages: Set<String>
+        
+        private func languageMenuItem(lang: StoryDetailView.LanguageOption, selected: StoryDetailView.LanguageOption, supported: Bool) -> some View {
+            HStack {
+                Text(lang.flag)
+                Text(lang.displayName)
+                if lang == selected {
+                    Spacer()
+                    Image(systemName: "checkmark")
+                }
+                if !supported {
+                    Spacer()
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                }
+            }
+            .font(.caption2)
+        }
+        
+        private func languageMenuItemTarget(lang: StoryDetailView.LanguageOption, selected: StoryDetailView.LanguageOption) -> some View {
+            HStack {
+                Text(lang.flag)
+                Text(lang.displayName)
+                if lang == selected {
+                    Spacer()
+                    Image(systemName: "checkmark")
+                }
+            }
+            .font(.caption2)
+        }
+        
+        private func languageMenuLabel(lang: StoryDetailView.LanguageOption) -> some View {
+            HStack(spacing: 4) {
+                Text(lang.flag)
+                    .font(.callout)
+                Text(lang.displayName)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(6)
+        }
+        
+        var body: some View {
+            VStack(spacing: 24) {
+                Text("语言设置")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        // 说话语言选择
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("说话语言")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Menu {
+                                ForEach(StoryDetailView.LanguageOption.allCases) { lang in
+                                    let supported = supportedLanguages.isEmpty || supportedLanguages.contains(lang.rawValue)
+                                    Button {
+                                        selectedInputLanguage = lang
+                                    } label: {
+                                        languageMenuItem(lang: lang, selected: selectedInputLanguage, supported: supported)
+                                    }
+                                }
+                            } label: {
+                                languageMenuLabel(lang: selectedInputLanguage)
+                            }
+                        }
+                        
+                        // 箭头
+                        Image(systemName: "arrow.right")
+                            .foregroundColor(.accentColor)
+                            .font(.title3)
+                            .frame(width: 24)
+                        
+                        // 翻译语言选择
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("翻译语言")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Menu {
+                                ForEach(StoryDetailView.LanguageOption.allCases) { lang in
+                                    Button {
+                                        selectedTargetLanguage = lang
+                                    } label: {
+                                        languageMenuItemTarget(lang: lang, selected: selectedTargetLanguage)
+                                    }
+                                }
+                            } label: {
+                                languageMenuLabel(lang: selectedTargetLanguage)
+                            }
+                        }
+                    }
+                    
+                    // 语音识别支持状态
+                    HStack {
+                        let supported = supportedLanguages.isEmpty || supportedLanguages.contains(selectedInputLanguage.rawValue)
+                        Image(systemName: supported ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundColor(supported ? .green : .orange)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("语音识别")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            Text(supportedLanguages.isEmpty ? "正在检测语言支持..." : (supported ? "支持 " + selectedInputLanguage.displayName + " 语音识别" : "不支持 " + selectedInputLanguage.displayName + "，将使用系统默认语言"))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill((supportedLanguages.isEmpty || supportedLanguages.contains(selectedInputLanguage.rawValue)) ? Color.green.opacity(0.1) : Color.orange.opacity(0.1)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke((supportedLanguages.isEmpty || supportedLanguages.contains(selectedInputLanguage.rawValue)) ? Color.green.opacity(0.3) : Color.orange.opacity(0.3), lineWidth: 1)
+                    )
+                    
+                    // 翻译支持状态
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("翻译功能")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            Text("支持 \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.green.opacity(0.1)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                    )
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+    
     var body: some View {
         NavigationView {
             VStack {
@@ -519,44 +706,8 @@ struct RecordView: View {
                             .background(Color.red)
                             .cornerRadius(25)
                         }
-                        // 动态语言选择器
-                        VStack(spacing: 8) {
-                            HStack(spacing: 8) {
-                                Text("说话语言")
-                                    .font(.caption)
-                                    .frame(width: 60, alignment: .leading)
-                                Picker("说话语言", selection: $selectedInputLanguage) {
-                                    ForEach(StoryDetailView.LanguageOption.allCases) { lang in
-                                        let supported = supportedLanguages.isEmpty || supportedLanguages.contains(lang.rawValue)
-                                        HStack(spacing: 4) {
-                                            Text(lang.flag)
-                                            Text(lang.displayName + (supported ? "" : "（不支持）"))
-                                        }
-                                        .font(.caption)
-                                        .foregroundColor(supported ? .primary : .gray)
-                                        .tag(lang)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                            HStack(spacing: 8) {
-                                Text("翻译语言")
-                                    .font(.caption)
-                                    .frame(width: 60, alignment: .leading)
-                                Picker("翻译语言", selection: $selectedTargetLanguage) {
-                                    ForEach(StoryDetailView.LanguageOption.allCases) { lang in
-                                        HStack(spacing: 4) {
-                                            Text(lang.flag)
-                                            Text(lang.displayName)
-                                        }
-                                        .font(.caption)
-                                        .tag(lang)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                        }
-                        .padding(.top, 8)
+                        // 语言设置区域（加圆角背景和阴影）
+                        LanguageSettingsView(selectedInputLanguage: $selectedInputLanguage, selectedTargetLanguage: $selectedTargetLanguage, supportedLanguages: supportedLanguages)
                     }
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -809,5 +960,6 @@ struct ContentView: View {
                 .transition(.move(edge: .bottom))
             }
         }
+        .preferredColorScheme(themeManager.currentTheme.colorScheme)
     }
 }
