@@ -1,14 +1,20 @@
 import Foundation
 
 // 响应数据结构
-struct TitleAndSummaryResponse {
-    let title: String
-    let originalSummary: String
-    let chineseSummary: String
+public struct TitleAndSummaryResponse {
+    public let title: String
+    public let originalSummary: String
+    public let chineseSummary: String
+    
+    public init(title: String, originalSummary: String, chineseSummary: String) {
+        self.title = title
+        self.originalSummary = originalSummary
+        self.chineseSummary = chineseSummary
+    }
 }
 
 // API错误类型
-enum APIError: LocalizedError {
+public enum APIError: LocalizedError {
     case invalidURL
     case noAPIKey
     case invalidResponse
@@ -16,7 +22,7 @@ enum APIError: LocalizedError {
     case templateNotFound
     case invalidJSONResponse
     
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .invalidURL:
             return "无效的 API URL"
@@ -34,14 +40,125 @@ enum APIError: LocalizedError {
     }
 }
 
+// LLM Provider 配置
+public enum LLMProvider: String, CaseIterable, Identifiable {
+    case deepseek = "deepseek"
+    case openai = "openai"
+    case aliyun = "aliyun"
+    case openrouter = "openrouter"
+    
+    public var id: String { rawValue }
+    
+    public var displayName: String {
+        switch self {
+        case .deepseek: return "DeepSeek"
+        case .openai: return "OpenAI"
+        case .aliyun: return "阿里云通义千问"
+        case .openrouter: return "OpenRouter"
+        }
+    }
+    
+    public var baseURL: String {
+        switch self {
+        case .deepseek: return "https://api.deepseek.com/v1"
+        case .openai: return "https://api.openai.com/v1"
+        case .aliyun: return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        case .openrouter: return "https://openrouter.ai/api/v1"
+        }
+    }
+    
+    public var supportedModels: [LLMModel] {
+        switch self {
+        case .deepseek:
+            return [
+                LLMModel(id: "deepseek-chat", displayName: "DeepSeek Chat"),
+                LLMModel(id: "deepseek-coder", displayName: "DeepSeek Coder")
+            ]
+        case .openai:
+            return [
+                LLMModel(id: "gpt-4o", displayName: "GPT-4o"),
+                LLMModel(id: "gpt-4o-mini", displayName: "GPT-4o Mini"),
+                LLMModel(id: "gpt-4-turbo", displayName: "GPT-4 Turbo"),
+                LLMModel(id: "gpt-3.5-turbo", displayName: "GPT-3.5 Turbo")
+            ]
+        case .aliyun:
+            return [
+                LLMModel(id: "qwen-max", displayName: "通义千问 Max"),
+                LLMModel(id: "qwen-plus", displayName: "通义千问 Plus"),
+                LLMModel(id: "qwen-turbo", displayName: "通义千问 Turbo")
+            ]
+        case .openrouter:
+            return [
+                LLMModel(id: "anthropic/claude-3.5-sonnet", displayName: "Claude 3.5 Sonnet"),
+                LLMModel(id: "openai/gpt-4o", displayName: "GPT-4o"),
+                LLMModel(id: "google/gemini-pro-1.5", displayName: "Gemini Pro 1.5"),
+                LLMModel(id: "meta-llama/llama-3.1-405b-instruct", displayName: "Llama 3.1 405B")
+            ]
+        }
+    }
+    
+    public var defaultModel: LLMModel {
+        return supportedModels.first!
+    }
+}
+
+// LLM 模型配置
+public struct LLMModel: Identifiable, Hashable {
+    public let id: String
+    public let displayName: String
+    
+    public init(id: String, displayName: String) {
+        self.id = id
+        self.displayName = displayName
+    }
+}
+
+// LLM 配置管理
+public struct LLMConfig {
+    public let provider: LLMProvider
+    public let model: LLMModel
+    public let apiKey: String
+    
+    public var apiKeyUserDefaultsKey: String {
+        return "\(provider.rawValue)APIKey"
+    }
+    
+    public static func defaultProvider() -> LLMProvider {
+        if let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider"),
+           let provider = LLMProvider(rawValue: savedProvider) {
+            return provider
+        }
+        return .openai // 默认使用 OpenAI
+    }
+    
+    public static func defaultModel(for provider: LLMProvider) -> LLMModel {
+        if let savedModelId = UserDefaults.standard.string(forKey: "selectedLLMModel_\(provider.rawValue)"),
+           let model = provider.supportedModels.first(where: { $0.id == savedModelId }) {
+            return model
+        }
+        return provider.defaultModel
+    }
+    
+    public static func saveSelectedProvider(_ provider: LLMProvider) {
+        UserDefaults.standard.set(provider.rawValue, forKey: "selectedLLMProvider")
+    }
+    
+    public static func saveSelectedModel(_ model: LLMModel, for provider: LLMProvider) {
+        UserDefaults.standard.set(model.id, forKey: "selectedLLMModel_\(provider.rawValue)")
+    }
+}
+
 // 全局函数：生成标题和摘要
-func generateTitleAndSummary(for text: String) async throws -> TitleAndSummaryResponse {
-    let apiKey = UserDefaults.standard.string(forKey: "DeepSeekAPIKey") ?? ""
+public func generateTitleAndSummary(for text: String) async throws -> TitleAndSummaryResponse {
+    let selectedProvider = LLMConfig.defaultProvider()
+    let selectedModel = LLMConfig.defaultModel(for: selectedProvider)
+    let apiKey = UserDefaults.standard.string(forKey: selectedProvider.rawValue + "APIKey") ?? ""
+    
     guard !apiKey.isEmpty else {
         throw APIError.noAPIKey
     }
     
-    guard let url = URL(string: "https://api.deepseek.com/v1/chat/completions") else {
+    guard let url = URL(string: "\(selectedProvider.baseURL)/chat/completions") else {
         throw APIError.invalidURL
     }
     
@@ -82,7 +199,7 @@ func generateTitleAndSummary(for text: String) async throws -> TitleAndSummaryRe
     let prompt = template.replacingOccurrences(of: "{{TRANSCRIPT_TEXT}}", with: text)
     
     let requestBody: [String: Any] = [
-        "model": "deepseek-chat",
+        "model": selectedModel.id,
         "messages": [
             [
                 "role": "user",

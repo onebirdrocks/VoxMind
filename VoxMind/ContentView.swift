@@ -52,7 +52,9 @@ class ThemeManager: ObservableObject {
 
 // API 管理类
 class APIManager: ObservableObject {
-    @Published var deepSeekAPIKey: String = ""
+    @Published var selectedProvider: LLMProvider = .openai
+    @Published var selectedModel: LLMModel = LLMModel(id: "gpt-4o", displayName: "GPT-4o")
+    @Published var apiKeys: [String: String] = [:]
     @Published var isValidating: Bool = false
     @Published var validationStatus: ValidationStatus = .none
     
@@ -79,8 +81,16 @@ class APIManager: ObservableObject {
     }
     
     init() {
-        // 从 UserDefaults 加载保存的 API Key
-        self.deepSeekAPIKey = UserDefaults.standard.string(forKey: "DeepSeekAPIKey") ?? ""
+        // 从 UserDefaults 加载保存的设置
+        let defaultProvider = LLMConfig.defaultProvider()
+        self.selectedProvider = defaultProvider
+        self.selectedModel = LLMConfig.defaultModel(for: defaultProvider)
+        
+        // 加载所有Provider的API Keys
+        for provider in LLMProvider.allCases {
+            let key = UserDefaults.standard.string(forKey: provider.rawValue + "APIKey") ?? ""
+            apiKeys[provider.rawValue] = key
+        }
     }
     
     func validateAndSaveAPIKey() async {
@@ -89,7 +99,8 @@ class APIManager: ObservableObject {
             validationStatus = .none
         }
         
-        guard !deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let currentAPIKey = apiKeys[selectedProvider.rawValue] ?? ""
+        guard !currentAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             await MainActor.run {
                 isValidating = false
                 validationStatus = .invalid("API Key 不能为空")
@@ -98,10 +109,10 @@ class APIManager: ObservableObject {
         }
         
         do {
-            let isValid = try await validateDeepSeekAPIKey(deepSeekAPIKey)
+            let isValid = try await validateAPIKey(currentAPIKey, for: selectedProvider)
             await MainActor.run {
                 if isValid {
-                    UserDefaults.standard.set(deepSeekAPIKey, forKey: "DeepSeekAPIKey")
+                    UserDefaults.standard.set(currentAPIKey, forKey: selectedProvider.rawValue + "APIKey")
                     validationStatus = .valid
                 } else {
                     validationStatus = .invalid("API Key 无效")
@@ -116,8 +127,8 @@ class APIManager: ObservableObject {
         }
     }
     
-    private func validateDeepSeekAPIKey(_ apiKey: String) async throws -> Bool {
-        guard let url = URL(string: "https://api.deepseek.com/v1/models") else {
+    private func validateAPIKey(_ apiKey: String, for provider: LLMProvider) async throws -> Bool {
+        guard let url = URL(string: "\(provider.baseURL)/models") else {
             throw APIError.invalidURL
         }
         
@@ -135,12 +146,26 @@ class APIManager: ObservableObject {
         return false
     }
     
-
+    func setProvider(_ provider: LLMProvider) {
+        selectedProvider = provider
+        // 确保selectedModel是新Provider支持的模型
+        let newDefaultModel = LLMConfig.defaultModel(for: provider)
+        selectedModel = newDefaultModel
+        LLMConfig.saveSelectedProvider(provider)
+        LLMConfig.saveSelectedModel(newDefaultModel, for: provider)
+        validationStatus = .none
+    }
     
-
+    func setModel(_ model: LLMModel) {
+        selectedModel = model
+        LLMConfig.saveSelectedModel(model, for: selectedProvider)
+    }
+    
+    func updateAPIKey(_ key: String, for provider: LLMProvider) {
+        apiKeys[provider.rawValue] = key
+        validationStatus = .none
+    }
 }
-
-
 
 // 设置视图
 struct SettingsView: View {
@@ -164,9 +189,38 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section("DeepSeek API 设置") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SecureField("请输入 DeepSeek API Key", text: $apiManager.deepSeekAPIKey)
+                Section("LLM 提供商设置") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Provider 选择
+                        Picker("LLM 提供商", selection: $apiManager.selectedProvider) {
+                            ForEach(LLMProvider.allCases) { provider in
+                                Text(provider.displayName).tag(provider)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .onChange(of: apiManager.selectedProvider) { _, newProvider in
+                            apiManager.setProvider(newProvider)
+                        }
+                        
+                        // Model 选择
+                        Picker("模型", selection: $apiManager.selectedModel) {
+                            ForEach(apiManager.selectedProvider.supportedModels, id: \.id) { model in
+                                Text(model.displayName).tag(model)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .onChange(of: apiManager.selectedModel) { _, newModel in
+                            apiManager.setModel(newModel)
+                        }
+                        .id(apiManager.selectedProvider.id) // 重要：当Provider改变时重新创建Picker
+                        
+                        // API Key 输入
+                        let currentAPIKey = Binding<String>(
+                            get: { apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? "" },
+                            set: { apiManager.updateAPIKey($0, for: apiManager.selectedProvider) }
+                        )
+                        
+                        SecureField("请输入 \(apiManager.selectedProvider.displayName) API Key", text: currentAPIKey)
                             .textFieldStyle(.roundedBorder)
                         
                         if case .none = apiManager.validationStatus {
@@ -190,7 +244,7 @@ struct SettingsView: View {
                                 Text(apiManager.isValidating ? "验证中..." : "验证并保存")
                             }
                         }
-                        .disabled(apiManager.isValidating || apiManager.deepSeekAPIKey.isEmpty)
+                        .disabled(apiManager.isValidating || (apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? "").isEmpty)
                         .buttonStyle(.borderedProminent)
                     }
                     .padding(.vertical, 4)
@@ -335,7 +389,7 @@ struct ContentView: View {
             if let selectedStory = selection {
                 StoryDetailView(story: selectedStory, apiManager: apiManager)
             } else {
-                Text("🎙️ Welcome to OBVoiceLab! I’ll help you record, transcribe ✍️, translate 🌐, and summarize 📝 your voice logs effortlessly.")
+                Text("🎙️ Welcome to OBVoiceLab! I'll help you record, transcribe ✍️, translate 🌐, and summarize 📝 your voice logs effortlessly.")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.gray.opacity(0.05))
             }

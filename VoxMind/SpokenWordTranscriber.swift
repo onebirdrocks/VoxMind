@@ -9,6 +9,12 @@ import CoreMedia
 // Import Speech Analysis framework types
 // These are part of the newer Speech framework APIs
 
+// Translation specific errors
+enum TranslationError: Error {
+    case sessionInvalidated
+    case noResult
+}
+
 // Ensure TranscriptionError is defined locally or imported.
 enum TranscriptionError: Error {
     case couldNotDownloadModel
@@ -364,7 +370,7 @@ final class SpokenWordTranscriber: Sendable {
         
         do {
             // Additional check: verify session is still valid before using
-            guard translationSession != nil else {
+            guard let validSession = translationSession else {
                 print("Translation session became invalid during execution, aborting translation.")
                 Task { @MainActor in
                     self.isTranslating = false
@@ -372,11 +378,41 @@ final class SpokenWordTranscriber: Sendable {
                 return
             }
             
-            let response = try await session.translate(newTextToTranslate)
+            // Perform translation with comprehensive error handling
+            let response: Any
+            do {
+                response = try await validSession.translate(newTextToTranslate)
+                
+                // Double check session is still valid after translation completes
+                guard translationSession != nil else {
+                    print("Translation completed but session was invalidated during operation, discarding result.")
+                    Task { @MainActor in
+                        self.isTranslating = false
+                    }
+                    return
+                }
+            } catch {
+                // Handle TranslationSession lifecycle errors
+                let errorMessage = error.localizedDescription
+                if errorMessage.contains("TranslationSession after the view it was attached to has disappeared") ||
+                   errorMessage.contains("text session has already been cancelled") ||
+                   errorMessage.contains("CancellationError") {
+                    print("Translation cancelled due to session invalidation: \(errorMessage)")
+                    Task { @MainActor in
+                        self.translationSession = nil
+                        self.translationModelStatus = .notDownloaded
+                        self.isTranslating = false
+                    }
+                    return
+                } else {
+                    throw error // Re-throw other errors to be handled by outer catch
+                }
+            }
             
             Task { @MainActor in
-                // Extract the translated text from the response
-                let translatedText = response.targetText
+                // Extract the translated text from the response using reflection
+                let mirror = Mirror(reflecting: response)
+                let translatedText = mirror.children.first { $0.label == "targetText" }?.value as? String ?? ""
                 print("Translation result: '\(translatedText)'")
                 
                 // 实时翻译：将新翻译的内容追加到现有翻译中
@@ -437,19 +473,11 @@ final class SpokenWordTranscriber: Sendable {
             return
         }
         
-        // 检查翻译会话是否可用，如果不可用则等待一段时间重试
+        // 检查翻译会话是否可用，如果不可用则立即退出
+        // 不再等待会话重新创建，这可能导致在视图消失后的访问
         if translationSession == nil {
-            print("🔄 Translation session not available, waiting for session to be created...")
-            
-            // 等待最多5秒让翻译会话重新创建
-            for attempt in 1...10 {
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
-                if translationSession != nil {
-                    print("🔄 Translation session became available after \(Double(attempt) * 0.5) seconds")
-                    break
-                }
-                print("🔄 Waiting for translation session... attempt \(attempt)/10")
-            }
+            print("🔄 Translation session not available, skipping final translation.")
+            return
         }
         
         guard let session = translationSession else {
@@ -468,7 +496,7 @@ final class SpokenWordTranscriber: Sendable {
         
         do {
             // Additional check: verify session is still valid before using
-            guard translationSession != nil else {
+            guard let validSession = translationSession else {
                 print("🔄 Translation session became invalid during final translation, aborting.")
                 Task { @MainActor in
                     self.isTranslating = false
@@ -476,11 +504,41 @@ final class SpokenWordTranscriber: Sendable {
                 return
             }
             
-            // 进行全量翻译
-            let response = try await session.translate(fullText)
+            // 进行全量翻译，带会话验证和错误处理
+            let response: Any
+            do {
+                response = try await validSession.translate(fullText)
+                
+                // Double check session is still valid after translation completes
+                guard translationSession != nil else {
+                    print("🔄 Final translation completed but session was invalidated during operation, discarding result.")
+                    Task { @MainActor in
+                        self.isTranslating = false
+                    }
+                    return
+                }
+            } catch {
+                // Handle TranslationSession lifecycle errors in final translation
+                let errorMessage = error.localizedDescription
+                if errorMessage.contains("TranslationSession after the view it was attached to has disappeared") ||
+                   errorMessage.contains("text session has already been cancelled") ||
+                   errorMessage.contains("CancellationError") {
+                    print("🔄 Final translation cancelled due to session invalidation: \(errorMessage)")
+                    Task { @MainActor in
+                        self.translationSession = nil
+                        self.translationModelStatus = .notDownloaded
+                        self.isTranslating = false
+                    }
+                    return
+                } else {
+                    throw error // Re-throw other errors to be handled by outer catch
+                }
+            }
             
             Task { @MainActor in
-                let fullTranslatedText = response.targetText
+                // Extract the translated text from the response using reflection
+                let mirror = Mirror(reflecting: response)
+                let fullTranslatedText = mirror.children.first { $0.label == "targetText" }?.value as? String ?? ""
                 print("🔄 Final full translation completed")
                 print("🔄 Translated text length: \(fullTranslatedText.count) characters")
                 print("🔄 Translated text preview: '\(String(fullTranslatedText.prefix(100)))...'")
@@ -551,15 +609,19 @@ final class SpokenWordTranscriber: Sendable {
     func clearTranslationSession() {
         print("🧹 Clearing translation session reference")
         
+        // Immediately clear the session reference to prevent any further use
+        // This must be done FIRST to prevent race conditions
+        self.translationSession = nil
+        self.translationModelStatus = .notDownloaded
+        
         // Cancel any ongoing translation attempts
         if isTranslating {
             print("🧹 Cancelling ongoing translation")
             isTranslating = false
         }
         
-        // Clear the session reference
-        self.translationSession = nil
-        self.translationModelStatus = .notDownloaded
+        // Reset translation tracking
+        lastTranslatedText = ""
         
         print("🧹 Translation session cleared successfully")
     }
