@@ -20,8 +20,8 @@ extension AVAudioPlayerNode {
 
 import AVFoundation
 
-struct StoryDetailView: View {
-    @Bindable var story: Story
+struct VoiceLogDetailView: View {
+    @Bindable var story: VoiceLog
     @ObservedObject var apiManager: APIManager
     @Environment(\.modelContext) private var modelContext
     
@@ -130,7 +130,7 @@ struct StoryDetailView: View {
         }
     }
     
-    init(story: Story, apiManager: APIManager) {
+    init(story: VoiceLog, apiManager: APIManager) {
         self._story = Bindable(story)
         self.apiManager = apiManager
         // 确保新故事显示录制界面
@@ -868,7 +868,7 @@ struct StoryDetailView: View {
         // 减少调试打印以提高性能
         
         // 创建或更新转录器和录制器，确保绑定正确的Story
-        let storyBinding = Binding<Story>(
+        let storyBinding = Binding<VoiceLog>(
             get: { self.story },
             set: { newStory in 
                 // Story binding updated
@@ -1251,14 +1251,14 @@ struct StoryDetailView: View {
 // MARK: - Sub-Views for StoryDetailView
 
 struct TranscriptViewForRecording: View {
-    @Binding var story: Story
+    @Binding var story: VoiceLog
     
     @State private var recorder: Recorder
     @State private var speechTranscriber: SpokenWordTranscriber
     
     @State private var isRecording = false
     
-    init(story: Binding<Story>, recorder: Recorder, transcriber: SpokenWordTranscriber) {
+    init(story: Binding<VoiceLog>, recorder: Recorder, transcriber: SpokenWordTranscriber) {
         self._story = story
         self._recorder = State(initialValue: recorder)
         self._speechTranscriber = State(initialValue: transcriber)
@@ -1308,7 +1308,7 @@ struct TranscriptViewForRecording: View {
 }
 
 struct OriginalTextView: View {
-    @Bindable var story: Story
+    @Bindable var story: VoiceLog
     
     @State private var isPlaying = false
     @State private var currentPlaybackTime: Double = 0.0
@@ -1333,7 +1333,7 @@ struct OriginalTextView: View {
         }
     }
     
-    init(story: Story, recorder: Recorder) {
+    init(story: VoiceLog, recorder: Recorder) {
         self.story = story
         self.recorder = recorder  // Direct assignment
     }
@@ -1653,7 +1653,7 @@ struct OriginalTextView: View {
 }
 
 struct TranslatedTextView: View {
-    @Bindable var story: Story
+    @Bindable var story: VoiceLog
     @Binding var translationModelStatus: SpokenWordTranscriber.TranslationModelStatus
     var speechTranscriber: SpokenWordTranscriber?
     
@@ -1716,11 +1716,11 @@ struct TranslatedTextView: View {
 }
 
 struct SummaryView: View {
-    @Bindable var story: Story
+    @Bindable var story: VoiceLog
     @ObservedObject var apiManager: APIManager
     @State private var isRegenerating = false
     
-    init(story: Story, apiManager: APIManager) {
+    init(story: VoiceLog, apiManager: APIManager) {
         self.story = story
         self.apiManager = apiManager
     }

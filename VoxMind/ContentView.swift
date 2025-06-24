@@ -60,6 +60,9 @@ class APIManager: ObservableObject {
     @Published var isValidating: Bool = false
     @Published var validationStatus: ValidationStatus = .none
     
+    // 存储每个提供商的验证状态
+    @Published var validationStates: [String: ValidationState] = [:]
+    
     enum ValidationStatus {
         case none
         case valid
@@ -82,6 +85,18 @@ class APIManager: ObservableObject {
         }
     }
     
+    struct ValidationState: Codable {
+        let isValid: Bool
+        let timestamp: Date
+        let apiKeyHash: String  // 用于检查 API Key 是否变更
+        let errorMessage: String?
+        
+        var isExpired: Bool {
+            // 验证结果 24 小时后过期
+            Date().timeIntervalSince(timestamp) > 24 * 60 * 60
+        }
+    }
+    
     init() {
         // 从 UserDefaults 加载保存的设置
         let defaultProvider = LLMConfig.defaultProvider()
@@ -93,6 +108,32 @@ class APIManager: ObservableObject {
             let key = UserDefaults.standard.string(forKey: provider.rawValue + "APIKey") ?? ""
             apiKeys[provider.rawValue] = key
         }
+        
+        // 加载验证状态
+        loadValidationStates()
+    }
+    
+    private func loadValidationStates() {
+        for provider in LLMProvider.allCases {
+            let key = "ValidationState_\(provider.rawValue)"
+            if let data = UserDefaults.standard.data(forKey: key),
+               let state = try? JSONDecoder().decode(ValidationState.self, from: data) {
+                validationStates[provider.rawValue] = state
+            }
+        }
+    }
+    
+    private func saveValidationState(_ state: ValidationState, for provider: LLMProvider) {
+        let key = "ValidationState_\(provider.rawValue)"
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+        validationStates[provider.rawValue] = state
+    }
+    
+    func getAPIKeyHash(_ apiKey: String) -> String {
+        // 简单的哈希，用于检查 API Key 是否变更
+        return String(apiKey.hashValue)
     }
     
     func validateAndSaveAPIKey() async {
@@ -110,42 +151,212 @@ class APIManager: ObservableObject {
             return
         }
         
+        let apiKeyHash = getAPIKeyHash(currentAPIKey)
+        
+        // 检查是否有有效的缓存验证结果
+        if let cachedState = validationStates[selectedProvider.rawValue],
+           cachedState.apiKeyHash == apiKeyHash,
+           !cachedState.isExpired {
+            
+            print("🔄 使用缓存的验证结果 for \(selectedProvider.displayName)")
+            await MainActor.run {
+                if cachedState.isValid {
+                    validationStatus = .valid
+                } else {
+                    validationStatus = .invalid(cachedState.errorMessage ?? "API Key 无效")
+                }
+                isValidating = false
+            }
+            return
+        }
+        
+        print("🆕 执行新的验证 for \(selectedProvider.displayName)")
+        
         do {
             let isValid = try await validateAPIKey(currentAPIKey, for: selectedProvider)
             await MainActor.run {
                 if isValid {
                     UserDefaults.standard.set(currentAPIKey, forKey: selectedProvider.rawValue + "APIKey")
                     validationStatus = .valid
+                    
+                    // 保存成功的验证状态
+                    let successState = ValidationState(
+                        isValid: true,
+                        timestamp: Date(),
+                        apiKeyHash: apiKeyHash,
+                        errorMessage: nil
+                    )
+                    saveValidationState(successState, for: selectedProvider)
+                    
                 } else {
                     validationStatus = .invalid("API Key 无效")
+                    
+                    // 保存失败的验证状态
+                    let failureState = ValidationState(
+                        isValid: false,
+                        timestamp: Date(),
+                        apiKeyHash: apiKeyHash,
+                        errorMessage: "API Key 无效"
+                    )
+                    saveValidationState(failureState, for: selectedProvider)
                 }
                 isValidating = false
             }
         } catch {
             await MainActor.run {
-                validationStatus = .invalid(error.localizedDescription)
+                let errorMessage = error.localizedDescription
+                validationStatus = .invalid(errorMessage)
+                
+                // 保存错误的验证状态
+                let errorState = ValidationState(
+                    isValid: false,
+                    timestamp: Date(),
+                    apiKeyHash: apiKeyHash,
+                    errorMessage: errorMessage
+                )
+                saveValidationState(errorState, for: selectedProvider)
+                
                 isValidating = false
             }
         }
     }
     
     private func validateAPIKey(_ apiKey: String, for provider: LLMProvider) async throws -> Bool {
-        guard let url = URL(string: "\(provider.baseURL)/models") else {
+        print("🔍 开始验证 \(provider.displayName) API Key...")
+        print("🔑 Key 长度: \(apiKey.count)")
+        print("🔑 Key 前缀: \(String(apiKey.prefix(10)))...")
+        
+        // 针对不同提供商使用不同的验证方式
+        let endpoint: String
+        var needsSpecialAuth = false
+        
+        switch provider.rawValue {
+        case "openrouter":
+            endpoint = "/models"  // OpenRouter 使用 models 端点验证
+        case "aliyun":
+            endpoint = "/models"  // 阿里云通义千问使用 models 端点
+            needsSpecialAuth = true  // 阿里云使用不同的认证方式
+        default:
+            endpoint = "/models"  // 默认使用 models 端点
+        }
+        
+        guard let url = URL(string: "\(provider.baseURL)\(endpoint)") else {
+            print("❌ 无效的验证 URL: \(provider.baseURL)\(endpoint)")
             throw APIError.invalidURL
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let (_, response) = try await URLSession.shared.data(for: request)
-        
-        if let httpResponse = response as? HTTPURLResponse {
-            return httpResponse.statusCode == 200
+        // 根据不同提供商设置认证方式
+        switch provider.rawValue {
+        case "aliyun":
+            // 阿里云使用 Authorization: Bearer API_KEY
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        case "openrouter":
+            // OpenRouter 使用标准 Bearer 认证加特殊头部
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://voxmind.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("VoxMind", forHTTPHeaderField: "X-Title")
+            request.setValue("VoxMind/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
+        default:
+            // 其他提供商使用标准 Bearer 认证
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
         
-        return false
+        print("📤 验证请求发送到: \(url)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📥 验证响应状态码: \(httpResponse.statusCode)")
+                
+                // 打印响应内容以便调试
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("📄 验证响应内容: \(String(responseString.prefix(500)))...")
+                }
+                
+                // 根据不同提供商判断成功状态
+                switch provider.rawValue {
+                case "openrouter":
+                    if httpResponse.statusCode == 200 {
+                        // 检查响应是否包含模型列表
+                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let dataArray = json["data"] as? [[String: Any]],
+                           !dataArray.isEmpty {
+                            print("✅ OpenRouter 验证成功，找到 \(dataArray.count) 个模型")
+                            return true
+                        } else {
+                            print("⚠️ OpenRouter 返回 200 但没有模型数据")
+                            return false
+                        }
+                    } else if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                        print("❌ OpenRouter API Key 无效或无权限")
+                        return false
+                    } else {
+                        print("❌ OpenRouter 验证失败，状态码: \(httpResponse.statusCode)")
+                        return false
+                    }
+                    
+                case "aliyun":
+                    if httpResponse.statusCode == 200 {
+                        print("✅ 阿里云通义千问验证成功")
+                        return true
+                    } else if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                        print("❌ 阿里云 API Key 无效或无权限")
+                        return false
+                    } else {
+                        print("❌ 阿里云验证失败，状态码: \(httpResponse.statusCode)")
+                        return false
+                    }
+                    
+                case "deepseek":
+                    if httpResponse.statusCode == 200 {
+                        print("✅ DeepSeek 验证成功")
+                        return true
+                    } else if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                        print("❌ DeepSeek API Key 无效或无权限")
+                        return false
+                    } else {
+                        print("❌ DeepSeek 验证失败，状态码: \(httpResponse.statusCode)")
+                        return false
+                    }
+                    
+                default:
+                    // 其他提供商的通用验证
+                    if httpResponse.statusCode == 200 {
+                        print("✅ \(provider.displayName) 验证成功")
+                        return true
+                    } else if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                        print("❌ \(provider.displayName) API Key 无效或无权限")
+                        return false
+                    } else {
+                        print("❌ \(provider.displayName) 验证失败，状态码: \(httpResponse.statusCode)")
+                        return false
+                    }
+                }
+            }
+            
+            print("❌ 无法获取 HTTP 响应")
+            return false
+            
+        } catch {
+            print("❌ 验证请求失败: \(error.localizedDescription)")
+            
+            // 网络错误可能不代表 API Key 无效
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .notConnectedToInternet, .networkConnectionLost, .timedOut:
+                    throw APIError.apiError("网络连接问题，请检查网络设置")
+                default:
+                    throw APIError.apiError("网络请求失败: \(urlError.localizedDescription)")
+                }
+            }
+            
+            throw error
+        }
     }
     
     func setProvider(_ provider: LLMProvider) {
@@ -166,6 +377,41 @@ class APIManager: ObservableObject {
     func updateAPIKey(_ key: String, for provider: LLMProvider) {
         apiKeys[provider.rawValue] = key
         validationStatus = .none
+        
+        // 如果 API Key 发生变化，清除对应的验证状态
+        let newHash = getAPIKeyHash(key)
+        if let cachedState = validationStates[provider.rawValue],
+           cachedState.apiKeyHash != newHash {
+            validationStates.removeValue(forKey: provider.rawValue)
+            let key = "ValidationState_\(provider.rawValue)"
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+    
+    // 获取当前选中提供商的验证状态显示
+    func getCurrentValidationStatusMessage() -> String {
+        if let cachedState = validationStates[selectedProvider.rawValue],
+           !cachedState.isExpired {
+            if cachedState.isValid {
+                let timeAgo = formatTimeAgo(cachedState.timestamp)
+                return "✅ 已验证通过 (\(timeAgo))"
+            } else {
+                let timeAgo = formatTimeAgo(cachedState.timestamp)
+                return "❌ 验证失败 (\(timeAgo)): \(cachedState.errorMessage ?? "未知错误")"
+            }
+        }
+        return ""
+    }
+    
+    private func formatTimeAgo(_ date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "刚刚"
+        } else if interval < 3600 {
+            return "\(Int(interval / 60))分钟前"
+        } else {
+            return "\(Int(interval / 3600))小时前"
+        }
     }
 }
 
@@ -231,6 +477,15 @@ struct SettingsView: View {
                         SecureField("请输入 \(apiManager.selectedProvider.displayName) API Key", text: currentAPIKey)
                             .textFieldStyle(.roundedBorder)
                         
+                        // 显示缓存的验证状态
+                        let cachedStatusMessage = apiManager.getCurrentValidationStatusMessage()
+                        if !cachedStatusMessage.isEmpty {
+                            Text(cachedStatusMessage)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        // 显示当前验证状态
                         if case .none = apiManager.validationStatus {
                             // 不显示任何状态
                         } else {
@@ -249,7 +504,8 @@ struct SettingsView: View {
                                     ProgressView()
                                         .scaleEffect(0.8)
                                 }
-                                Text(apiManager.isValidating ? "验证中..." : "验证并保存")
+                                
+                                Text(getValidationButtonText())
                             }
                         }
                         .disabled(apiManager.isValidating || (apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? "").isEmpty)
@@ -291,20 +547,37 @@ struct SettingsView: View {
         case .system: return "gear"
         }
     }
+    
+    private func getValidationButtonText() -> String {
+        if apiManager.isValidating {
+            return "验证中..."
+        } else {
+            let currentKey = apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? ""
+            let keyHash = apiManager.getAPIKeyHash(currentKey)
+            
+            if let cachedState = apiManager.validationStates[apiManager.selectedProvider.rawValue],
+               cachedState.apiKeyHash == keyHash,
+               !cachedState.isExpired {
+                return cachedState.isValid ? "重新验证" : "重试验证"
+            } else {
+                return "验证并保存"
+            }
+        }
+    }
 }
 
 // 本机视图（原VoiceLog列表）
 struct LocalView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Story.title) private var stories: [Story]
-    @State private var selection: Story?
+    @Query(sort: \VoiceLog.title) private var stories: [VoiceLog]
+    @State private var selection: VoiceLog?
     @State private var showingDeleteAlert = false
-    @State private var storyToDelete: Story?
+    @State private var storyToDelete: VoiceLog?
     @ObservedObject var apiManager: APIManager
     @Binding var searchText: String
     @Binding var isSearching: Bool
     
-    private var filteredStories: [Story] {
+    private var filteredStories: [VoiceLog] {
         if searchText.isEmpty {
             return stories
         } else {
@@ -323,7 +596,7 @@ struct LocalView: View {
     }
     
     // 删除单个Story的方法
-    private func deleteStory(_ story: Story) {
+    private func deleteStory(_ story: VoiceLog) {
         withAnimation {
             if selection?.id == story.id {
                 selection = nil
@@ -346,7 +619,7 @@ struct LocalView: View {
             }
         }
         
-        storyToDelete = nil as Story?
+        storyToDelete = nil as VoiceLog?
     }
     
     // 删除Story记录的方法（批量删除）
@@ -398,7 +671,7 @@ struct LocalView: View {
                     Button {
                         stopAllAudioPlayback()
                         
-                        let newStory = Story.blank()
+                        let newStory = VoiceLog.blank()
                         modelContext.insert(newStory)
                         
                         DispatchQueue.main.async {
@@ -414,7 +687,7 @@ struct LocalView: View {
             }
         } detail: {
             if let selectedStory = selection {
-                StoryDetailView(story: selectedStory, apiManager: apiManager)
+                VoiceLogDetailView(story: selectedStory, apiManager: apiManager)
             } else {
                 VStack(spacing: 20) {
                     Image(systemName: "mic.circle.fill")
@@ -487,16 +760,36 @@ struct WidgetView: View {
 // 录音视图
 struct RecordView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject var themeManager: ThemeManager
     @ObservedObject var apiManager: APIManager
-    @State private var currentStory: Story?
-    // 动态语言支持
-    @State private var selectedInputLanguage: StoryDetailView.LanguageOption = .chinese
-    @State private var selectedTargetLanguage: StoryDetailView.LanguageOption = .english
+    @State private var currentStory: VoiceLog?
+    // 动态语言支持 - 从 UserDefaults 加载上次选择
+    @State private var selectedInputLanguage: VoiceLogDetailView.LanguageOption = {
+        if let savedInput = UserDefaults.standard.string(forKey: "SelectedInputLanguage"),
+           let language = VoiceLogDetailView.LanguageOption.allCases.first(where: { $0.rawValue == savedInput }) {
+            return language
+        }
+        return .english // 默认说话语言为英文
+    }()
+    
+    @State private var selectedTargetLanguage: VoiceLogDetailView.LanguageOption = {
+        if let savedTarget = UserDefaults.standard.string(forKey: "SelectedTargetLanguage"),
+           let language = VoiceLogDetailView.LanguageOption.allCases.first(where: { $0.rawValue == savedTarget }) {
+            return language
+        }
+        return .chinese // 默认翻译语言为中文
+    }()
     @State private var supportedLanguages: Set<String> = []
+    @State private var showFullScreenRecording = false
+    @State private var showDetailView = false
+    @State private var detailStory: VoiceLog?
+    @State private var showValidationAlert = false
+    @State private var validationMessage = ""
+    
     // 页面加载时拉取支持的语言
     private func loadSupportedLanguages() {
         Task {
-            let transcriber = SpokenWordTranscriber(story: .constant(Story.blank()))
+            let transcriber = SpokenWordTranscriber(story: .constant(VoiceLog.blank()))
             let supported = await transcriber.getSupportedLocales()
             await MainActor.run {
                 supportedLanguages = supported
@@ -504,29 +797,58 @@ struct RecordView: View {
         }
     }
     
+    // 验证语言选择
+    private func validateLanguageSelection() -> Bool {
+        // 检查说话语言是否支持
+        if !supportedLanguages.isEmpty && !supportedLanguages.contains(selectedInputLanguage.rawValue) {
+            validationMessage = "选择的说话语言 \(selectedInputLanguage.displayName) 不受支持。请选择其他语言。"
+            return false
+        }
+        
+        // 检查说话语言和翻译语言是否相同
+        if selectedInputLanguage == selectedTargetLanguage {
+            validationMessage = "说话语言和翻译语言不能相同。请选择不同的语言。"
+            return false
+        }
+        
+        return true
+    }
+    
+    // 保存用户的语言选择
+    private func saveLanguageSelection() {
+        UserDefaults.standard.set(selectedInputLanguage.rawValue, forKey: "SelectedInputLanguage")
+        UserDefaults.standard.set(selectedTargetLanguage.rawValue, forKey: "SelectedTargetLanguage")
+        print("✅ 已保存语言选择: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
+    }
+    
     private struct LanguageSettingsView: View {
-        @Binding var selectedInputLanguage: StoryDetailView.LanguageOption
-        @Binding var selectedTargetLanguage: StoryDetailView.LanguageOption
+        @Binding var selectedInputLanguage: VoiceLogDetailView.LanguageOption
+        @Binding var selectedTargetLanguage: VoiceLogDetailView.LanguageOption
         var supportedLanguages: Set<String>
         
-        private func languageMenuItem(lang: StoryDetailView.LanguageOption, selected: StoryDetailView.LanguageOption, supported: Bool) -> some View {
+        private func languageMenuItem(lang: VoiceLogDetailView.LanguageOption, selected: VoiceLogDetailView.LanguageOption, supported: Bool) -> some View {
             HStack {
                 Text(lang.flag)
                 Text(lang.displayName)
                 if lang == selected {
                     Spacer()
                     Image(systemName: "checkmark")
+                        .foregroundColor(.blue)
                 }
                 if !supported {
                     Spacer()
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundColor(.orange)
+                    Text("不支持")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
                 }
             }
             .font(.caption2)
+            .foregroundColor(supported ? .primary : .secondary)
         }
         
-        private func languageMenuItemTarget(lang: StoryDetailView.LanguageOption, selected: StoryDetailView.LanguageOption) -> some View {
+        private func languageMenuItemTarget(lang: VoiceLogDetailView.LanguageOption, selected: VoiceLogDetailView.LanguageOption) -> some View {
             HStack {
                 Text(lang.flag)
                 Text(lang.displayName)
@@ -538,7 +860,7 @@ struct RecordView: View {
             .font(.caption2)
         }
         
-        private func languageMenuLabel(lang: StoryDetailView.LanguageOption) -> some View {
+        private func languageMenuLabel(lang: VoiceLogDetailView.LanguageOption) -> some View {
             HStack(spacing: 4) {
                 Text(lang.flag)
                     .font(.callout)
@@ -571,13 +893,16 @@ struct RecordView: View {
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                             Menu {
-                                ForEach(StoryDetailView.LanguageOption.allCases) { lang in
+                                ForEach(VoiceLogDetailView.LanguageOption.allCases) { lang in
                                     let supported = supportedLanguages.isEmpty || supportedLanguages.contains(lang.rawValue)
                                     Button {
                                         selectedInputLanguage = lang
+                                        // 实时保存选择
+                                        UserDefaults.standard.set(lang.rawValue, forKey: "SelectedInputLanguage")
                                     } label: {
                                         languageMenuItem(lang: lang, selected: selectedInputLanguage, supported: supported)
                                     }
+                                    .disabled(!supported)
                                 }
                             } label: {
                                 languageMenuLabel(lang: selectedInputLanguage)
@@ -596,9 +921,11 @@ struct RecordView: View {
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                             Menu {
-                                ForEach(StoryDetailView.LanguageOption.allCases) { lang in
+                                ForEach(VoiceLogDetailView.LanguageOption.allCases) { lang in
                                     Button {
                                         selectedTargetLanguage = lang
+                                        // 实时保存选择
+                                        UserDefaults.standard.set(lang.rawValue, forKey: "SelectedTargetLanguage")
                                     } label: {
                                         languageMenuItemTarget(lang: lang, selected: selectedTargetLanguage)
                                     }
@@ -606,47 +933,6 @@ struct RecordView: View {
                             } label: {
                                 languageMenuLabel(lang: selectedTargetLanguage)
                             }
-                        }
-                    }
-                    
-                    // 语音识别支持状态
-                    HStack {
-                        let supported = supportedLanguages.isEmpty || supportedLanguages.contains(selectedInputLanguage.rawValue)
-                        Image(systemName: supported ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundColor(supported ? .green : .orange)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("语音识别")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                            Text(supportedLanguages.isEmpty ? "正在检测语言支持..." : (supported ? "支持 " + selectedInputLanguage.displayName + " 语音识别" : "不支持 " + selectedInputLanguage.displayName + "，将使用系统默认语言"))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill((supportedLanguages.isEmpty || supportedLanguages.contains(selectedInputLanguage.rawValue)) ? Color.green.opacity(0.1) : Color.orange.opacity(0.1)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke((supportedLanguages.isEmpty || supportedLanguages.contains(selectedInputLanguage.rawValue)) ? Color.green.opacity(0.3) : Color.orange.opacity(0.3), lineWidth: 1)
-                    )
-                    
-                    // 翻译支持状态
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("翻译功能")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                            Text("支持 \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
                         }
                         Spacer()
                     }
@@ -672,8 +958,24 @@ struct RecordView: View {
     var body: some View {
         NavigationView {
             VStack {
-                if let story = currentStory {
-                    StoryDetailView(story: story, apiManager: apiManager)
+                if showFullScreenRecording, let story = currentStory {
+                    // 全屏录音界面
+                    FullScreenRecordingView(
+                        story: story,
+                        apiManager: apiManager,
+                        sourceLanguage: selectedInputLanguage,
+                        targetLanguage: selectedTargetLanguage,
+                        onDismiss: { completedStory in
+                            showFullScreenRecording = false
+                            currentStory = nil
+                            
+                            if let story = completedStory {
+                                detailStory = story
+                                showDetailView = true
+                            }
+                        }
+                    )
+                    .environmentObject(themeManager)
                 } else {
                     VStack(spacing: 30) {
                         Image(systemName: "waveform.circle.fill")
@@ -690,10 +992,20 @@ struct RecordView: View {
                             .multilineTextAlignment(.center)
                         
                         Button {
-                            let newStory = Story.blank()
-                            modelContext.insert(newStory)
-                            currentStory = newStory
-                            print("Created new story for recording: \(newStory.title)")
+                            // 验证语言选择
+                            if validateLanguageSelection() {
+                                // 保存用户选择
+                                saveLanguageSelection()
+                                
+                                let newStory = VoiceLog.blank()
+                                modelContext.insert(newStory)
+                                currentStory = newStory
+                                showFullScreenRecording = true
+                                print("Created new story for recording: \(newStory.title)")
+                                print("Selected languages: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
+                            } else {
+                                showValidationAlert = true
+                            }
                         } label: {
                             HStack {
                                 Image(systemName: "mic.fill")
@@ -717,15 +1029,18 @@ struct RecordView: View {
                     }
                 }
             }
-            .navigationTitle("录音")
-            .toolbar {
-                if currentStory != nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("完成") {
-                            currentStory = nil
-                        }
+            .navigationBarHidden(showFullScreenRecording)
+            .sheet(isPresented: $showDetailView) {
+                if let story = detailStory {
+                    NavigationView {
+                        VoiceLogDetailView(story: story, apiManager: apiManager)
                     }
                 }
+            }
+            .alert("语言设置错误", isPresented: $showValidationAlert) {
+                Button("确定", role: .cancel) { }
+            } message: {
+                Text(validationMessage)
             }
         }
     }
@@ -734,12 +1049,12 @@ struct RecordView: View {
 // 搜索视图
 struct SearchView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Story.title) private var stories: [Story]
-    @State private var selection: Story?
+    @Query(sort: \VoiceLog.title) private var stories: [VoiceLog]
+    @State private var selection: VoiceLog?
     @ObservedObject var apiManager: APIManager
     @Binding var searchText: String
     
-    private var filteredStories: [Story] {
+    private var filteredStories: [VoiceLog] {
         if searchText.isEmpty {
             return []
         } else {
@@ -849,7 +1164,7 @@ struct SearchView: View {
             .navigationTitle("搜索")
         } detail: {
             if let selectedStory = selection {
-                StoryDetailView(story: selectedStory, apiManager: apiManager)
+                VoiceLogDetailView(story: selectedStory, apiManager: apiManager)
             } else {
                 VStack(spacing: 20) {
                     Image(systemName: "doc.text.magnifyingglass")
@@ -872,6 +1187,565 @@ struct SearchView: View {
         }
     }
 }
+
+// 全屏录音视图
+struct FullScreenRecordingView: View {
+    @Bindable var story: VoiceLog
+    @ObservedObject var apiManager: APIManager
+    @EnvironmentObject var themeManager: ThemeManager
+    let sourceLanguage: VoiceLogDetailView.LanguageOption
+    let targetLanguage: VoiceLogDetailView.LanguageOption
+    let onDismiss: (VoiceLog?) -> Void
+    
+    @State private var recorder: Recorder!
+    @State private var speechTranscriber: SpokenWordTranscriber!
+    @State private var isRecording = false
+    @State private var isStoppingRecording = false
+    @State private var stopCountdown = 0
+    @State private var translationSession: TranslationSession?
+    
+    var body: some View {
+        ZStack {
+            // 背景 - 根据主题使用不同的颜色
+            (themeManager.currentTheme == .dark ? Color.black : Color(.systemBackground))
+                .ignoresSafeArea()
+            
+            VStack(spacing: 20) {
+                // 语言显示 - 移到顶部，更紧凑
+                VStack(spacing: 4) {
+                    Text("录音中...")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.8) : .primary.opacity(0.8))
+                    
+                    HStack(spacing: 6) {
+                        VStack(spacing: 1) {
+                            Text(sourceLanguage.flag)
+                                .font(.caption2)
+                            Text(sourceLanguage.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.7) : .primary.opacity(0.7))
+                        }
+                        
+                        Image(systemName: "arrow.right")
+                            .font(.caption2)
+                            .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.5) : .primary.opacity(0.5))
+                        
+                        VStack(spacing: 1) {
+                            Text(targetLanguage.flag)
+                                .font(.caption2)
+                            Text(targetLanguage.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.7) : .primary.opacity(0.7))
+                        }
+                    }
+                }
+                .padding(.top, 50)
+                
+                // 转录文本显示区域 - 更大，自动滚动，适配主题
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let finalizedTranscript = speechTranscriber?.finalizedTranscript, !finalizedTranscript.characters.isEmpty {
+                                Text(finalizedTranscript)
+                                    .foregroundStyle(themeManager.currentTheme == .dark ? .white : .primary)
+                                    .font(.body)
+                                    .id("finalizedText")
+                            }
+                            
+                            if let volatileTranscript = speechTranscriber?.volatileTranscript, !volatileTranscript.characters.isEmpty {
+                                Text(volatileTranscript)
+                                    .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.6) : .primary.opacity(0.6))
+                                    .font(.body)
+                                    .id("volatileText")
+                            } else if speechTranscriber?.finalizedTranscript.characters.isEmpty ?? true {
+                                Text("语音转录将在这里显示...")
+                                    .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.5) : .primary.opacity(0.5))
+                                    .font(.body)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .onChange(of: speechTranscriber?.finalizedTranscript) { _, _ in
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                proxy.scrollTo("finalizedText", anchor: .bottom)
+                            }
+                        }
+                        .onChange(of: speechTranscriber?.volatileTranscript) { _, _ in
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                proxy.scrollTo("volatileText", anchor: .bottom)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 350)
+                .background(themeManager.currentTheme == .dark ? Color.white.opacity(0.1) : Color.primary.opacity(0.05))
+                .cornerRadius(12)
+                .padding(.horizontal)
+                
+                // 翻译文本显示区域 - 更大，自动滚动，适配主题，始终显示
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if let translatedText = story.translatedText, !translatedText.characters.isEmpty {
+                            Text(translatedText)
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .green.opacity(0.9) : .green)
+                                .font(.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .id("translatedText")
+                                .onChange(of: story.translatedText) { _, _ in
+                                    withAnimation(.easeOut(duration: 0.3)) {
+                                        proxy.scrollTo("translatedText", anchor: .bottom)
+                                    }
+                                }
+                        } else {
+                            Text("翻译将在这里显示...")
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .green.opacity(0.5) : .green.opacity(0.6))
+                                .font(.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                        }
+                    }
+                }
+                .frame(maxHeight: 280)
+                .background(themeManager.currentTheme == .dark ? Color.green.opacity(0.1) : Color.green.opacity(0.05))
+                .cornerRadius(12)
+                .padding(.horizontal)
+                
+                Spacer()
+                
+                // 录音控制按钮 - 更小，适配主题
+                VStack(spacing: 8) {
+                    if isStoppingRecording {
+                        VStack(spacing: 2) {
+                            Text("停止录音中...")
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .white : .primary)
+                                .font(.caption2)
+                            
+                            if stopCountdown > 0 {
+                                Text("\(stopCountdown)")
+                                    .font(.title3)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.red)
+                            }
+                        }
+                    }
+                    
+                    Button {
+                        if isRecording {
+                            stopRecording()
+                        }
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(isRecording ? Color.red : Color.gray)
+                                .frame(width: 60, height: 60)
+                            
+                            if isRecording {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.white)
+                                    .frame(width: 20, height: 20)
+                            } else {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 20, height: 20)
+                            }
+                        }
+                        .scaleEffect(isRecording ? 1.1 : 1.0)
+                        .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isRecording)
+                    }
+                    .disabled(isStoppingRecording)
+                    
+                    Text(isRecording ? "点击停止录音" : "准备录音")
+                        .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.8) : .primary.opacity(0.8))
+                        .font(.caption2)
+                }
+                .padding(.bottom, 20)
+            }
+        }
+        .onAppear {
+            setupRecording()
+        }
+        .onDisappear {
+            cleanupRecording()
+        }
+        .translationTask(
+            TranslationSession.Configuration(
+                source: Locale.Language(identifier: sourceLanguage.rawValue),
+                target: Locale.Language(identifier: targetLanguage.rawValue)
+            )
+        ) { session in
+            translationSession = session
+            speechTranscriber?.setTranslationSession(session)
+        }
+    }
+    
+    private func setupRecording() {
+        // 创建转录器和录音器
+        speechTranscriber = SpokenWordTranscriber(story: Binding(
+            get: { story },
+            set: { _ in }
+        ))
+        
+        recorder = Recorder(transcriber: speechTranscriber, story: Binding(
+            get: { story },
+            set: { _ in }
+        ))
+        
+        // 设置语言
+        Task {
+            await speechTranscriber.updateLanguageSettings(
+                sourceLanguage: sourceLanguage.rawValue,
+                targetLanguage: targetLanguage.rawValue
+            )
+            
+            // 自动开始录音
+            await startRecording()
+        }
+    }
+    
+    private func startRecording() async {
+        guard let recorder = recorder else { return }
+        
+        await recorder.requestMicAuthorization()
+        
+        if recorder.isMicAuthorized {
+            await MainActor.run {
+                isRecording = true
+            }
+            
+            do {
+                try await recorder.record()
+            } catch {
+                print("Recording failed: \(error)")
+                await MainActor.run {
+                    isRecording = false
+                }
+            }
+        }
+    }
+    
+    private func stopRecording() {
+        guard isRecording else { return }
+        
+        isStoppingRecording = true
+        stopCountdown = 3
+        
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
+            stopCountdown -= 1
+            
+            if stopCountdown <= 0 {
+                timer.invalidate()
+                
+                Task {
+                    try? await recorder?.stopRecording()
+                    try? await speechTranscriber?.finishTranscribing()
+                    
+                    await MainActor.run {
+                        story.isDone = true
+                        isRecording = false
+                        isStoppingRecording = false
+                    }
+                    
+                    // 生成标题和摘要
+                    await generateTitleAndSummary()
+                    
+                    // 跳转到详情页
+                    await MainActor.run {
+                        onDismiss(story)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func generateTitleAndSummary() async {
+        let transcriptText = String(story.text.characters)
+        let translatedText = story.translatedText != nil ? String(story.translatedText!.characters) : ""
+        
+        print("🔄 开始生成标题和摘要...")
+        print("📝 转录文本长度: \(transcriptText.count)")
+        print("🌐 翻译文本长度: \(translatedText.count)")
+        
+        guard !transcriptText.isEmpty else { 
+            print("❌ 转录文本为空，跳过生成")
+            return 
+        }
+        
+        // 读取提示词模板
+        let prompt: String
+        if let templatePath = Bundle.main.path(forResource: "PromptTemplate", ofType: "txt"),
+           let template = try? String(contentsOfFile: templatePath) {
+            // 使用模板文件，替换占位符
+            prompt = template.replacingOccurrences(of: "{{TRANSCRIPT_TEXT}}", with: transcriptText)
+            print("📄 使用模板文件生成提示词")
+        } else {
+            // 如果模板文件不存在，使用默认提示词
+            prompt = """
+            请根据以下语音转录内容，生成标题和摘要。
+
+            请严格按照以下 JSON 格式返回，不包含任何其他额外文字：
+
+            {
+              "title": "生成的标题",
+              "original_summary": "English summary of the content...",
+              "translated_summary": "中文摘要内容..."
+            }
+
+            语音转录内容：
+            \(transcriptText)
+            """
+            print("⚠️ 模板文件未找到，使用默认提示词")
+        }
+        
+        print("🤖 发送提示词到 LLM...")
+        
+        do {
+            // 使用 APIManager 调用 LLM
+            let response = try await callLLM(prompt: prompt)
+            print("✅ LLM 响应: \(response)")
+            
+            // 清理响应，移除可能的markdown代码块标记
+            let cleanedResponse = response
+                .replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            print("🧹 清理后的响应: \(cleanedResponse)")
+            
+            // 解析 JSON 响应
+            guard let data = cleanedResponse.data(using: .utf8) else {
+                print("❌ 无法将响应转换为 Data")
+                return
+            }
+            
+            do {
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                print("📋 解析的 JSON: \(json ?? [:])")
+                
+                if let title = json?["title"] as? String {
+                    print("🎯 提取到标题: \(title)")
+                    
+                    // 尝试提取新格式的摘要字段
+                    let originalSummary = json?["original_summary"] as? String
+                    let translatedSummary = json?["translated_summary"] as? String
+                    
+                    // 如果新格式不存在，尝试旧格式
+                    let fallbackSummary = json?["summary"] as? String
+                    
+                    let finalOriginalSummary = originalSummary ?? fallbackSummary ?? ""
+                    let finalTranslatedSummary = translatedSummary ?? fallbackSummary ?? ""
+                    
+                    print("📄 提取到原文摘要: \(finalOriginalSummary.isEmpty ? "无" : "有内容")")
+                    print("📄 提取到中文摘要: \(finalTranslatedSummary.isEmpty ? "无" : "有内容")")
+                    
+                    if !finalOriginalSummary.isEmpty {
+                        await MainActor.run {
+                            story.title = title
+                            story.originalSummary = finalOriginalSummary
+                            story.chineseSummary = finalTranslatedSummary.isEmpty ? finalOriginalSummary : finalTranslatedSummary
+                            print("✅ 已更新 story 的标题和摘要")
+                        }
+                    } else {
+                        print("❌ 摘要内容为空，设置默认值")
+                        await MainActor.run {
+                            story.title = title
+                            story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
+                            story.chineseSummary = story.originalSummary
+                            print("🔄 已设置默认摘要")
+                        }
+                    }
+                } else {
+                    print("❌ JSON 格式不正确，无法提取 title")
+                    // 设置默认值
+                    await MainActor.run {
+                        story.title = "语音记录 \(Date().formatted(.dateTime.month().day().hour().minute()))"
+                        story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
+                        story.chineseSummary = story.originalSummary
+                        print("🔄 已设置默认标题和摘要")
+                    }
+                }
+            } catch {
+                print("❌ JSON 解析错误: \(error)")
+                // 设置默认值
+                await MainActor.run {
+                    story.title = "语音记录 \(Date().formatted(.dateTime.month().day().hour().minute()))"
+                    story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
+                    story.chineseSummary = story.originalSummary
+                    print("🔄 已设置默认标题和摘要")
+                }
+            }
+            
+        } catch {
+            print("❌ LLM 调用失败: \(error)")
+            // 设置默认值
+            await MainActor.run {
+                story.title = "语音记录 \(Date().formatted(.dateTime.month().day().hour().minute()))"
+                story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
+                story.chineseSummary = story.originalSummary
+                print("🔄 已设置默认标题和摘要")
+            }
+        }
+    }
+    
+    private func callLLM(prompt: String) async throws -> String {
+        print("🔗 准备调用 LLM API...")
+        print("🎯 Provider: \(apiManager.selectedProvider.rawValue)")
+        print("🤖 Model: \(apiManager.selectedModel.id)")
+        
+        guard let url = URL(string: "\(apiManager.selectedProvider.baseURL)/chat/completions") else {
+            print("❌ 无效的 URL: \(apiManager.selectedProvider.baseURL)/chat/completions")
+            throw URLError(.badURL)
+        }
+        
+        let rawApiKey = apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? ""
+        let apiKey = rawApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !apiKey.isEmpty else {
+            print("❌ API Key 为空")
+            throw URLError(.userAuthenticationRequired)
+        }
+        
+        // 检查是否清理了空白字符
+        if rawApiKey != apiKey {
+            print("🧹 API Key 已清理空白字符: 原长度 \(rawApiKey.count) -> 清理后 \(apiKey.count)")
+        }
+        
+        print("🔑 API Key 已配置 (长度: \(apiKey.count))")
+        print("🔑 API Key 前缀: \(String(apiKey.prefix(15)))...")
+        print("🔑 API Key 后缀: ...\(String(apiKey.suffix(6)))")
+        
+        // 检查 OpenRouter API Key 格式
+        if apiManager.selectedProvider.rawValue == "openrouter" {
+            print("🔍 OpenRouter API Key 详细信息:")
+            print("   - 前缀: \(String(apiKey.prefix(15)))")
+            print("   - 长度: \(apiKey.count)")
+            print("   - 是否以 sk-or- 开头: \(apiKey.hasPrefix("sk-or-"))")
+            
+            // 检查 API Key 是否包含不可见字符
+            let cleanedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanedKey != apiKey {
+                print("⚠️ 警告: API Key 包含空白字符，已清理")
+                print("   - 原长度: \(apiKey.count)")
+                print("   - 清理后长度: \(cleanedKey.count)")
+            }
+            
+            if !apiKey.hasPrefix("sk-or-") {
+                print("⚠️ 警告: OpenRouter API Key 应该以 'sk-or-' 开头")
+                print("💡 提示: 请检查您的 API Key 是否正确")
+                print("🔍 实际前缀: '\(String(apiKey.prefix(6)))'")
+            }
+            if apiKey.count < 50 {
+                print("⚠️ 警告: OpenRouter API Key 长度可能不正确 (通常 > 50 字符)")
+            }
+        }
+        
+        var requestBody: [String: Any] = [
+            "model": apiManager.selectedModel.id,
+            "messages": [
+                [
+                    "role": "system", 
+                    "content": "你是一个专业的语音记录助手。请根据用户提供的语音转录内容，生成简洁的标题和详细的摘要。请严格按照JSON格式返回结果，包含title、original_summary和translated_summary三个字段，不要包含任何其他文字。"
+                ],
+                ["role": "user", "content": prompt]
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1200
+        ]
+        
+        // 只有 OpenAI 支持 response_format，OpenRouter 可能不支持
+        if apiManager.selectedProvider.rawValue == "openai" {
+            requestBody["response_format"] = ["type": "json_object"]
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        // 根据不同提供商设置认证方式
+        if apiManager.selectedProvider.rawValue == "openrouter" {
+            // OpenRouter 特殊设置 - 按照官方文档的顺序设置头部
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("https://voxmind.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("VoxMind", forHTTPHeaderField: "X-Title")
+            
+            print("🔧 OpenRouter 头部设置:")
+            print("   - Authorization: Bearer \(String(apiKey.prefix(10)))...***")
+            print("   - Content-Type: application/json")
+            print("   - HTTP-Referer: https://voxmind.app")
+            print("   - X-Title: VoxMind")
+            
+            // 验证 API Key 是否正确截断显示
+            let keyPrefix = String(apiKey.prefix(15))
+            let keySuffix = String(apiKey.suffix(4))
+            print("🔑 完整 API Key 检查: \(keyPrefix)...\(keySuffix) (长度: \(apiKey.count))")
+            
+        } else {
+            // 其他提供商使用标准认证
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("📤 发送请求到: \(url)")
+        print("📋 请求头:")
+        for (key, value) in request.allHTTPHeaderFields ?? [:] {
+            if key == "Authorization" {
+                print("   \(key): Bearer \(String(apiKey.prefix(10)))...***")
+            } else {
+                print("   \(key): \(value)")
+            }
+        }
+        
+        if let bodyData = request.httpBody,
+           let bodyString = String(data: bodyData, encoding: .utf8) {
+            print("📝 请求体: \(bodyString)")
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        if let httpResponse = response as? HTTPURLResponse {
+            print("📥 HTTP 状态码: \(httpResponse.statusCode)")
+        }
+        
+        // 打印原始响应
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📄 原始响应: \(responseString)")
+        }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("❌ 无法解析响应为 JSON")
+            throw URLError(.cannotParseResponse)
+        }
+        
+        // 检查是否有错误
+        if let error = json["error"] as? [String: Any] {
+            let errorMessage = error["message"] as? String ?? "未知错误"
+            print("❌ API 错误: \(errorMessage)")
+            throw URLError(.badServerResponse)
+        }
+        
+        guard let choices = json["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            print("❌ 响应格式不正确")
+            print("📋 完整响应: \(json)")
+            throw URLError(.cannotParseResponse)
+        }
+        
+        print("✅ 成功获取 LLM 响应")
+        return content
+    }
+    
+    private func cleanupRecording() {
+        speechTranscriber?.clearTranslationSession()
+        translationSession = nil
+    }
+}
+
+
 
 struct ContentView: View {
     @StateObject private var themeManager = ThemeManager()
@@ -897,6 +1771,7 @@ struct ContentView: View {
                     }
                     .tag(1)
                 RecordView(apiManager: apiManager)
+                    .environmentObject(themeManager)
                     .tabItem {
                         Image(systemName: "mic.circle")
                         Text("录音")

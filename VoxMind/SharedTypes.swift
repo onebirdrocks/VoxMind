@@ -1,12 +1,12 @@
 import Foundation
 
 // 响应数据结构
-public struct TitleAndSummaryResponse {
-    public let title: String
-    public let originalSummary: String
-    public let chineseSummary: String
+struct TitleAndSummaryResponse {
+    let title: String
+    let originalSummary: String
+    let chineseSummary: String
     
-    public init(title: String, originalSummary: String, chineseSummary: String) {
+    init(title: String, originalSummary: String, chineseSummary: String) {
         self.title = title
         self.originalSummary = originalSummary
         self.chineseSummary = chineseSummary
@@ -14,7 +14,7 @@ public struct TitleAndSummaryResponse {
 }
 
 // API错误类型
-public enum APIError: LocalizedError {
+enum APIError: LocalizedError {
     case invalidURL
     case noAPIKey
     case invalidResponse
@@ -22,7 +22,7 @@ public enum APIError: LocalizedError {
     case templateNotFound
     case invalidJSONResponse
     
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .invalidURL:
             return "无效的 API URL"
@@ -41,15 +41,15 @@ public enum APIError: LocalizedError {
 }
 
 // LLM Provider 配置
-public enum LLMProvider: String, CaseIterable, Identifiable {
+enum LLMProvider: String, CaseIterable, Identifiable {
     case deepseek = "deepseek"
     case openai = "openai"
     case aliyun = "aliyun"
     case openrouter = "openrouter"
     
-    public var id: String { rawValue }
+    var id: String { rawValue }
     
-    public var displayName: String {
+    var displayName: String {
         switch self {
         case .deepseek: return "DeepSeek"
         case .openai: return "OpenAI"
@@ -58,7 +58,7 @@ public enum LLMProvider: String, CaseIterable, Identifiable {
         }
     }
     
-    public var baseURL: String {
+    var baseURL: String {
         switch self {
         case .deepseek: return "https://api.deepseek.com/v1"
         case .openai: return "https://api.openai.com/v1"
@@ -67,7 +67,7 @@ public enum LLMProvider: String, CaseIterable, Identifiable {
         }
     }
     
-    public var supportedModels: [LLMModel] {
+    var supportedModels: [LLMModel] {
         switch self {
         case .deepseek:
             return [
@@ -97,33 +97,33 @@ public enum LLMProvider: String, CaseIterable, Identifiable {
         }
     }
     
-    public var defaultModel: LLMModel {
+    var defaultModel: LLMModel {
         return supportedModels.first!
     }
 }
 
 // LLM 模型配置
-public struct LLMModel: Identifiable, Hashable {
-    public let id: String
-    public let displayName: String
+struct LLMModel: Identifiable, Hashable {
+    let id: String
+    let displayName: String
     
-    public init(id: String, displayName: String) {
+    init(id: String, displayName: String) {
         self.id = id
         self.displayName = displayName
     }
 }
 
 // LLM 配置管理
-public struct LLMConfig {
-    public let provider: LLMProvider
-    public let model: LLMModel
-    public let apiKey: String
+struct LLMConfig {
+    let provider: LLMProvider
+    let model: LLMModel
+    let apiKey: String
     
-    public var apiKeyUserDefaultsKey: String {
+    var apiKeyUserDefaultsKey: String {
         return "\(provider.rawValue)APIKey"
     }
     
-    public static func defaultProvider() -> LLMProvider {
+    static func defaultProvider() -> LLMProvider {
         if let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider"),
            let provider = LLMProvider(rawValue: savedProvider) {
             return provider
@@ -131,7 +131,7 @@ public struct LLMConfig {
         return .openai // 默认使用 OpenAI
     }
     
-    public static func defaultModel(for provider: LLMProvider) -> LLMModel {
+    static func defaultModel(for provider: LLMProvider) -> LLMModel {
         if let savedModelId = UserDefaults.standard.string(forKey: "selectedLLMModel_\(provider.rawValue)"),
            let model = provider.supportedModels.first(where: { $0.id == savedModelId }) {
             return model
@@ -139,17 +139,17 @@ public struct LLMConfig {
         return provider.defaultModel
     }
     
-    public static func saveSelectedProvider(_ provider: LLMProvider) {
+    static func saveSelectedProvider(_ provider: LLMProvider) {
         UserDefaults.standard.set(provider.rawValue, forKey: "selectedLLMProvider")
     }
     
-    public static func saveSelectedModel(_ model: LLMModel, for provider: LLMProvider) {
+    static func saveSelectedModel(_ model: LLMModel, for provider: LLMProvider) {
         UserDefaults.standard.set(model.id, forKey: "selectedLLMModel_\(provider.rawValue)")
     }
 }
 
 // 全局函数：生成标题和摘要
-public func generateTitleAndSummary(for text: String) async throws -> TitleAndSummaryResponse {
+func generateTitleAndSummary(for text: String) async throws -> TitleAndSummaryResponse {
     let selectedProvider = LLMConfig.defaultProvider()
     let selectedModel = LLMConfig.defaultModel(for: selectedProvider)
     let apiKey = UserDefaults.standard.string(forKey: selectedProvider.rawValue + "APIKey") ?? ""

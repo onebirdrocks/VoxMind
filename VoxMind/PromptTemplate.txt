@@ -15,7 +15,7 @@
 {
   "title": "生成的标题",
   "original_summary": "English summary of the content...",
-  "chinese_summary": "中文摘要内容..."
+  "translated_summary": "Translated Summary..."
 }
 
 语音转录内容：

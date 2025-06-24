@@ -100,11 +100,11 @@ final class SpokenWordTranscriber: Sendable {
     var volatileTranscript: AttributedString = ""
     var finalizedTranscript: AttributedString = ""
     
-    var story: Binding<Story>
+    var story: Binding<VoiceLog>
     
     // MARK: - Initialization
     
-    init(story: Binding<Story>) {
+    init(story: Binding<VoiceLog>) {
         self.story = story
         // Initially set to not downloaded, will be updated when translation session is available
         self.translationModelStatus = .notDownloaded
@@ -142,7 +142,7 @@ final class SpokenWordTranscriber: Sendable {
     }
     
     // Method to update story binding
-    func updateStoryBinding(_ newStoryBinding: Binding<Story>) {
+    func updateStoryBinding(_ newStoryBinding: Binding<VoiceLog>) {
         self.story = newStoryBinding
         print("SpokenWordTranscriber: Updated story binding to Story ID: \(newStoryBinding.wrappedValue.id)")
         // Only reset transcription for new/incomplete stories, not for completed ones

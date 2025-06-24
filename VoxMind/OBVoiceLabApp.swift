@@ -14,6 +14,6 @@ struct OBVoiceLabApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: Story.self)
+        .modelContainer(for: VoiceLog.self)
     }
 }

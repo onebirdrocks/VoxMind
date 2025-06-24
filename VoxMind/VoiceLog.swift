@@ -19,7 +19,7 @@ struct AudioTimeRangeInfo: Codable {
 }
 
 @Model
-class Story: Identifiable {
+class VoiceLog: Identifiable {
     @Attribute(.unique) var id: UUID
     var title: String
     var textData: Data // Store AttributedString as Data
@@ -207,12 +207,12 @@ class Story: Identifiable {
         }
     }
 
-    static func blank() -> Story {
+    static func blank() -> VoiceLog {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd-HH-mm"
         let timestamp = formatter.string(from: Date())
         let title = "新音频日志\(timestamp)"
-        let story = Story(title: title, text: AttributedString(""), isDone: false)
+        let story = VoiceLog(title: title, text: AttributedString(""), isDone: false)
         print("Created blank story: title=\(story.title), isDone=\(story.isDone), text.isEmpty=\(String(story.text.characters).isEmpty)")
         return story
     }
@@ -267,8 +267,8 @@ class Story: Identifiable {
     }
 }
 
-extension Story: Equatable, Hashable {
-    static func == (lhs: Story, rhs: Story) -> Bool {
+extension VoiceLog: Equatable, Hashable {
+    static func == (lhs: VoiceLog, rhs: VoiceLog) -> Bool {
         lhs.id == rhs.id
     }
     func hash(into hasher: inout Hasher) {

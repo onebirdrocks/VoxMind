@@ -15,13 +15,13 @@ class Recorder {
     private let transcriber: SpokenWordTranscriber
     var playerNode: AVAudioPlayerNode?
     
-    var story: Binding<Story>
+    var story: Binding<VoiceLog>
     
     var file: AVAudioFile?
 
     private(set) var isMicAuthorized = false
 
-    init(transcriber: SpokenWordTranscriber, story: Binding<Story>) {
+    init(transcriber: SpokenWordTranscriber, story: Binding<VoiceLog>) {
         self.audioEngine = AVAudioEngine()
         self.transcriber = transcriber
         self.story = story
