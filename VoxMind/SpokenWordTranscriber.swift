@@ -717,12 +717,12 @@ extension SpokenWordTranscriber {
     
     func supported(locale: Locale) async -> Bool {
         let supported = await SpeechTranscriber.supportedLocales
-        return supported.map { $0.identifier(.bcp47) }.contains(locale.identifier(.bcp47))
+        return supported.map { $0.identifier }.contains(locale.identifier)
     }
 
     func installed(locale: Locale) async -> Bool {
         let installed = await Set(SpeechTranscriber.installedLocales)
-        return installed.map { $0.identifier(.bcp47) }.contains(locale.identifier(.bcp47))
+        return installed.map { $0.identifier }.contains(locale.identifier)
     }
 
     func downloadIfNeeded(for module: SpeechTranscriber) async throws {
