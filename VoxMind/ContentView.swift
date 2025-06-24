@@ -9,6 +9,8 @@ import SwiftData
 import Speech
 import Combine
 import Foundation
+import VoxMind
+import Translation
 
 // 主题管理类
 class ThemeManager: ObservableObject {
@@ -100,7 +102,7 @@ class APIManager: ObservableObject {
         }
         
         let currentAPIKey = apiKeys[selectedProvider.rawValue] ?? ""
-        guard !currentAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !currentAPIKey.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else {
             await MainActor.run {
                 isValidating = false
                 validationStatus = .invalid("API Key 不能为空")
@@ -171,10 +173,14 @@ class APIManager: ObservableObject {
 struct SettingsView: View {
     @ObservedObject var themeManager: ThemeManager
     @ObservedObject var apiManager: APIManager
-    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        NavigationView {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("设置")
+                .font(.title2)
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding([.top, .horizontal])
             Form {
                 Section("主题设置") {
                     Picker("主题模式", selection: $themeManager.currentTheme) {
@@ -212,7 +218,7 @@ struct SettingsView: View {
                         .onChange(of: apiManager.selectedModel) { _, newModel in
                             apiManager.setModel(newModel)
                         }
-                        .id(apiManager.selectedProvider.id) // 重要：当Provider改变时重新创建Picker
+                        .id(apiManager.selectedProvider.id)
                         
                         // API Key 输入
                         let currentAPIKey = Binding<String>(
@@ -245,20 +251,12 @@ struct SettingsView: View {
                             }
                         }
                         .disabled(apiManager.isValidating || (apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? "").isEmpty)
-                        .buttonStyle(.borderedProminent)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
                     }
                     .padding(.vertical, 4)
-                }
-            }
-            .navigationTitle("设置")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("完成") {
-                        dismiss()
-                    }
                 }
             }
         }
@@ -273,42 +271,51 @@ struct SettingsView: View {
     }
 }
 
-struct ContentView: View {
+// 本机视图（原VoiceLog列表）
+struct LocalView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Story.title) private var stories: [Story]
     @State private var selection: Story?
-    @State private var showingSettings = false
     @State private var showingDeleteAlert = false
     @State private var storyToDelete: Story?
-    @StateObject private var themeManager = ThemeManager()
-    @StateObject private var apiManager = APIManager()
+    @ObservedObject var apiManager: APIManager
+    @Binding var searchText: String
+    @Binding var isSearching: Bool
+    
+    private var filteredStories: [Story] {
+        if searchText.isEmpty {
+            return stories
+        } else {
+            return stories.filter { story in
+                story.title.localizedCaseInsensitiveContains(searchText) ||
+                String(story.text.characters).localizedCaseInsensitiveContains(searchText) ||
+                (story.originalSummary?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+                (story.chineseSummary?.localizedCaseInsensitiveContains(searchText) ?? false)
+            }
+        }
+    }
     
     // 停止所有音频播放的方法
     private func stopAllAudioPlayback() {
-        // 通知所有当前活跃的录制器停止播放
         NotificationCenter.default.post(name: NSNotification.Name("stopAllPlayback"), object: nil)
     }
     
     // 删除单个Story的方法
     private func deleteStory(_ story: Story) {
         withAnimation {
-            // 如果要删除的是当前选中的Story，清除选择
             if selection?.id == story.id {
                 selection = nil
             }
             
-            // 删除关联的音频文件
             if let audioURL = story.url,
                FileManager.default.fileExists(atPath: audioURL.path) {
                 try? FileManager.default.removeItem(at: audioURL)
                 print("Deleted audio file: \(audioURL.lastPathComponent)")
             }
             
-            // 从SwiftData上下文中删除
             modelContext.delete(story)
             print("Deleted story: \(story.title)")
             
-            // 保存上下文变更
             do {
                 try modelContext.save()
                 print("Successfully saved context after deletion")
@@ -317,15 +324,15 @@ struct ContentView: View {
             }
         }
         
-        // 清理状态
         storyToDelete = nil as Story?
     }
     
     // 删除Story记录的方法（批量删除）
     private func deleteStories(offsets: IndexSet) {
         withAnimation {
+            let storiesToDelete = filteredStories
             for index in offsets {
-                let story = stories[index]
+                let story = storiesToDelete[index]
                 deleteStory(story)
             }
         }
@@ -334,16 +341,22 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                ForEach(stories) { story in
+                ForEach(filteredStories) { story in
                     NavigationLink(value: story) {
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(story.title)
+                                .font(.headline)
                             if story.isDone {
-                                Text("Recorded & Translated")
+                                Text("已录制并翻译")
                                     .font(.caption)
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.green)
+                            } else {
+                                Text("录制中...")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
                             }
                         }
+                        .padding(.vertical, 2)
                     }
                     .contextMenu {
                         Button {
@@ -357,23 +370,15 @@ struct ContentView: View {
                 }
                 .onDelete(perform: deleteStories)
             }
-            .navigationTitle("语音日志")
+            .navigationTitle("本机")
             .toolbar {
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showingSettings = true
-                    } label: {
-                        Label("Settings", systemImage: "gear")
-                    }
-                    
-                    Button {
-                        // 停止所有当前播放的音频
                         stopAllAudioPlayback()
                         
                         let newStory = Story.blank()
                         modelContext.insert(newStory)
                         
-                        // 强制更新选择，确保界面切换
                         DispatchQueue.main.async {
                             selection = newStory
                         }
@@ -381,7 +386,7 @@ struct ContentView: View {
                         print("Created new story: \(newStory.title), isDone: \(newStory.isDone)")
                         print("Selection set to new story: \(newStory.id)")
                     } label: {
-                        Label("Add Story", systemImage: "plus")
+                        Label("新建录音", systemImage: "plus")
                     }
                 }
             }
@@ -389,14 +394,24 @@ struct ContentView: View {
             if let selectedStory = selection {
                 StoryDetailView(story: selectedStory, apiManager: apiManager)
             } else {
-                Text("🎙️ Welcome to OBVoiceLab! I'll help you record, transcribe ✍️, translate 🌐, and summarize 📝 your voice logs effortlessly.")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.gray.opacity(0.05))
+                VStack(spacing: 20) {
+                    Image(systemName: "mic.circle.fill")
+                        .font(.system(size: 80))
+                        .foregroundColor(.blue)
+                    
+                    Text("🎙️ 欢迎使用 VoxMind!")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("我将帮助您轻松录制、转录 ✍️、翻译 🌐 和总结 📝 您的语音日志")
+                        .font(.body)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.systemGroupedBackground))
             }
-        }
-        .preferredColorScheme(themeManager.currentTheme.colorScheme)
-        .sheet(isPresented: $showingSettings) {
-            SettingsView(themeManager: themeManager, apiManager: apiManager)
         }
         .alert("确认删除", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) { }
@@ -408,6 +423,390 @@ struct ContentView: View {
         } message: {
             if let story = storyToDelete {
                 Text("确定要删除语音日志「\(story.title)」吗？此操作无法撤销。")
+            }
+        }
+    }
+}
+
+// 挂件视图
+struct WidgetView: View {
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 30) {
+                Image(systemName: "apps.iphone")
+                    .font(.system(size: 80))
+                    .foregroundColor(.purple)
+                
+                Text("挂件功能")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text("小组件和快捷方式功能即将推出")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("桌面小组件", systemImage: "rectangle.3.group")
+                    Label("Siri 快捷指令", systemImage: "mic.badge.plus")
+                    Label("控制中心集成", systemImage: "control")
+                }
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("挂件")
+        }
+    }
+}
+
+// 录音视图
+struct RecordView: View {
+    @Environment(\.modelContext) private var modelContext
+    @ObservedObject var apiManager: APIManager
+    @State private var currentStory: Story?
+    // 动态语言支持
+    @State private var selectedInputLanguage: StoryDetailView.LanguageOption = .chinese
+    @State private var selectedTargetLanguage: StoryDetailView.LanguageOption = .english
+    @State private var supportedLanguages: Set<String> = []
+    // 页面加载时拉取支持的语言
+    private func loadSupportedLanguages() {
+        Task {
+            let transcriber = SpokenWordTranscriber(story: .constant(Story.blank()))
+            let supported = await transcriber.getSupportedLocales()
+            await MainActor.run {
+                supportedLanguages = supported
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack {
+                if let story = currentStory {
+                    StoryDetailView(story: story, apiManager: apiManager)
+                } else {
+                    VStack(spacing: 30) {
+                        Image(systemName: "waveform.circle.fill")
+                            .font(.system(size: 80))
+                            .foregroundColor(.red)
+                        
+                        Text("开始新的录音")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("点击下方按钮开始录制您的语音")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        
+                        Button {
+                            let newStory = Story.blank()
+                            modelContext.insert(newStory)
+                            currentStory = newStory
+                            print("Created new story for recording: \(newStory.title)")
+                        } label: {
+                            HStack {
+                                Image(systemName: "mic.fill")
+                                Text("开始录音")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 15)
+                            .background(Color.red)
+                            .cornerRadius(25)
+                        }
+                        // 动态语言选择器
+                        VStack(spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text("说话语言")
+                                    .font(.caption)
+                                    .frame(width: 60, alignment: .leading)
+                                Picker("说话语言", selection: $selectedInputLanguage) {
+                                    ForEach(StoryDetailView.LanguageOption.allCases) { lang in
+                                        let supported = supportedLanguages.isEmpty || supportedLanguages.contains(lang.rawValue)
+                                        HStack(spacing: 4) {
+                                            Text(lang.flag)
+                                            Text(lang.displayName + (supported ? "" : "（不支持）"))
+                                        }
+                                        .font(.caption)
+                                        .foregroundColor(supported ? .primary : .gray)
+                                        .tag(lang)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                            }
+                            HStack(spacing: 8) {
+                                Text("翻译语言")
+                                    .font(.caption)
+                                    .frame(width: 60, alignment: .leading)
+                                Picker("翻译语言", selection: $selectedTargetLanguage) {
+                                    ForEach(StoryDetailView.LanguageOption.allCases) { lang in
+                                        HStack(spacing: 4) {
+                                            Text(lang.flag)
+                                            Text(lang.displayName)
+                                        }
+                                        .font(.caption)
+                                        .tag(lang)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGroupedBackground))
+                    .onAppear {
+                        loadSupportedLanguages()
+                    }
+                }
+            }
+            .navigationTitle("录音")
+            .toolbar {
+                if currentStory != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("完成") {
+                            currentStory = nil
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 搜索视图
+struct SearchView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Story.title) private var stories: [Story]
+    @State private var selection: Story?
+    @ObservedObject var apiManager: APIManager
+    @Binding var searchText: String
+    
+    private var filteredStories: [Story] {
+        if searchText.isEmpty {
+            return []
+        } else {
+            return stories.filter { story in
+                story.title.localizedCaseInsensitiveContains(searchText) ||
+                String(story.text.characters).localizedCaseInsensitiveContains(searchText) ||
+                (story.originalSummary?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+                (story.chineseSummary?.localizedCaseInsensitiveContains(searchText) ?? false)
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationSplitView {
+            VStack {
+                // 搜索框
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                    
+                    TextField("搜索语音日志...", text: $searchText)
+                        .textFieldStyle(PlainTextFieldStyle())
+                    
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+                .padding(.horizontal)
+                .padding(.top)
+                
+                // 搜索结果
+                if searchText.isEmpty {
+                    VStack(spacing: 20) {
+                        Image(systemName: "magnifyingglass.circle")
+                            .font(.system(size: 80))
+                            .foregroundColor(.gray)
+                        
+                        Text("搜索语音日志")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("输入关键词来搜索您的语音日志")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGroupedBackground))
+                } else if filteredStories.isEmpty {
+                    VStack(spacing: 20) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 80))
+                            .foregroundColor(.gray)
+                        
+                        Text("未找到结果")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("没有找到包含\"\(searchText)\"的语音日志")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGroupedBackground))
+                } else {
+                    List(selection: $selection) {
+                        ForEach(filteredStories) { story in
+                            NavigationLink(value: story) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(story.title)
+                                        .font(.headline)
+                                    if story.isDone {
+                                        Text("已录制并翻译")
+                                            .font(.caption)
+                                            .foregroundColor(.green)
+                                    } else {
+                                        Text("录制中...")
+                                            .font(.caption)
+                                            .foregroundColor(.orange)
+                                    }
+                                    
+                                    // 显示匹配的内容片段
+                                    let textContent = String(story.text.characters)
+                                    if !textContent.isEmpty && textContent.localizedCaseInsensitiveContains(searchText) {
+                                        Text(textContent.prefix(100) + (textContent.count > 100 ? "..." : ""))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("搜索")
+        } detail: {
+            if let selectedStory = selection {
+                StoryDetailView(story: selectedStory, apiManager: apiManager)
+            } else {
+                VStack(spacing: 20) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 80))
+                        .foregroundColor(.blue)
+                    
+                    Text("选择搜索结果")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("从左侧列表中选择一个语音日志来查看详情")
+                        .font(.body)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.systemGroupedBackground))
+            }
+        }
+    }
+}
+
+struct ContentView: View {
+    @StateObject private var themeManager = ThemeManager()
+    @StateObject private var apiManager = APIManager()
+    @State private var selectedTab = 0
+    @State private var searchText = ""
+    @State private var isSearching = false
+    
+    var body: some View {
+        ZStack {
+            // 主内容：系统TabView
+            TabView(selection: $selectedTab) {
+                LocalView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
+                    .tabItem {
+                        Image(systemName: "house")
+                        Text("本机")
+                    }
+                    .tag(0)
+                WidgetView()
+                    .tabItem {
+                        Image(systemName: "apps.iphone")
+                        Text("挂件")
+                    }
+                    .tag(1)
+                RecordView(apiManager: apiManager)
+                    .tabItem {
+                        Image(systemName: "mic.circle")
+                        Text("录音")
+                    }
+                    .tag(2)
+                SettingsView(themeManager: themeManager, apiManager: apiManager)
+                    .tabItem {
+                        Image(systemName: "gearshape")
+                        Text("设置")
+                    }
+                    .tag(3)
+            }
+            // 悬浮的搜索按钮
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        withAnimation { isSearching = true }
+                    }) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 22))
+                            .foregroundColor(.gray)
+                            .frame(width: 48, height: 48)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .shadow(radius: 2)
+                    .padding(.bottom, 10)
+                    .padding(.trailing, 24)
+                }
+            }
+            // 搜索界面（全屏遮罩）
+            if isSearching {
+                Color.black.opacity(0.2).ignoresSafeArea()
+                VStack {
+                    HStack {
+                        Button(action: {
+                            withAnimation { isSearching = false }
+                            searchText = ""
+                        }) {
+                            Image(systemName: "chevron.left")
+                                .font(.title2)
+                                .padding(.trailing, 4)
+                        }
+                        TextField("搜索语音日志...", text: $searchText)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .padding(.vertical, 8)
+                        if !searchText.isEmpty {
+                            Button(action: { searchText = "" }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                    }
+                    .padding()
+                    // 搜索结果视图
+                    SearchView(apiManager: apiManager, searchText: $searchText)
+                    Spacer()
+                }
+                .background(Color(.systemBackground))
+                .transition(.move(edge: .bottom))
             }
         }
     }
