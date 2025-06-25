@@ -9,6 +9,9 @@ import SwiftData
 import Speech
 import Combine
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 import Translation
 
@@ -301,7 +304,9 @@ class APIManager: ObservableObject {
 extension View {
     func hideKeyboardOnTap() -> some View {
         self.onTapGesture {
+            #if os(iOS)
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            #endif
         }
     }
 }
@@ -312,6 +317,7 @@ struct SettingsView: View {
     @ObservedObject var apiManager: APIManager
     @State private var limitlessAPIKey: String = UserDefaults.standard.string(forKey: "LimitlessAIAPIKey") ?? ""
     @State private var limitlessSaveStatus: String = ""
+    @State private var showOnboarding = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -402,6 +408,23 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
                 // 新增 Limitless.AI 设置
+                Section("应用帮助") {
+                    Button(action: {
+                        showOnboarding = true
+                    }) {
+                        HStack {
+                            Image(systemName: "questionmark.circle")
+                                .foregroundColor(.blue)
+                            Text("查看引导教程")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                }
+                
                 Section("挂件 Limitless.AI 设置") {
                     VStack(alignment: .leading, spacing: 12) {
                         SecureField("请输入 Limitless.AI API Key", text: $limitlessAPIKey)
@@ -423,6 +446,9 @@ struct SettingsView: View {
                 }
             }
             .hideKeyboardOnTap()
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView()
         }
     }
     
@@ -1618,6 +1644,7 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var searchText = ""
     @State private var isSearching = false
+    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "HasCompletedOnboarding")
     
     // 全屏录音相关状态
     @State private var showFullScreenRecording = false
@@ -1764,6 +1791,12 @@ struct ContentView: View {
                     VoiceLogDetailView(story: story, apiManager: apiManager)
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView()
+                .onDisappear {
+                    showOnboarding = false
+                }
         }
     }
 }
