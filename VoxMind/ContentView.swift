@@ -61,7 +61,7 @@ class APIManager: ObservableObject {
     @Published var validationStatus: ValidationStatus = .none
     
     // 存储每个提供商的验证状态
-    @Published var validationStates: [String: ValidationState] = [:]
+
     
     enum ValidationStatus {
         case none
@@ -85,17 +85,7 @@ class APIManager: ObservableObject {
         }
     }
     
-    struct ValidationState: Codable {
-        let isValid: Bool
-        let timestamp: Date
-        let apiKeyHash: String  // 用于检查 API Key 是否变更
-        let errorMessage: String?
-        
-        var isExpired: Bool {
-            // 验证结果 24 小时后过期
-            Date().timeIntervalSince(timestamp) > 24 * 60 * 60
-        }
-    }
+
     
     init() {
         // 从 UserDefaults 加载保存的设置
@@ -109,31 +99,6 @@ class APIManager: ObservableObject {
             apiKeys[provider.rawValue] = key
         }
         
-        // 加载验证状态
-        loadValidationStates()
-    }
-    
-    private func loadValidationStates() {
-        for provider in LLMProvider.allCases {
-            let key = "ValidationState_\(provider.rawValue)"
-            if let data = UserDefaults.standard.data(forKey: key),
-               let state = try? JSONDecoder().decode(ValidationState.self, from: data) {
-                validationStates[provider.rawValue] = state
-            }
-        }
-    }
-    
-    private func saveValidationState(_ state: ValidationState, for provider: LLMProvider) {
-        let key = "ValidationState_\(provider.rawValue)"
-        if let data = try? JSONEncoder().encode(state) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-        validationStates[provider.rawValue] = state
-    }
-    
-    func getAPIKeyHash(_ apiKey: String) -> String {
-        // 简单的哈希，用于检查 API Key 是否变更
-        return String(apiKey.hashValue)
     }
     
     func validateAndSaveAPIKey() async {
@@ -151,26 +116,7 @@ class APIManager: ObservableObject {
             return
         }
         
-        let apiKeyHash = getAPIKeyHash(currentAPIKey)
-        
-        // 检查是否有有效的缓存验证结果
-        if let cachedState = validationStates[selectedProvider.rawValue],
-           cachedState.apiKeyHash == apiKeyHash,
-           !cachedState.isExpired {
-            
-            print("🔄 使用缓存的验证结果 for \(selectedProvider.displayName)")
-            await MainActor.run {
-                if cachedState.isValid {
-                    validationStatus = .valid
-                } else {
-                    validationStatus = .invalid(cachedState.errorMessage ?? "API Key 无效")
-                }
-                isValidating = false
-            }
-            return
-        }
-        
-        print("🆕 执行新的验证 for \(selectedProvider.displayName)")
+        print("🆕 执行验证 for \(selectedProvider.displayName)")
         
         do {
             let isValid = try await validateAPIKey(currentAPIKey, for: selectedProvider)
@@ -178,27 +124,8 @@ class APIManager: ObservableObject {
                 if isValid {
                     UserDefaults.standard.set(currentAPIKey, forKey: selectedProvider.rawValue + "APIKey")
                     validationStatus = .valid
-                    
-                    // 保存成功的验证状态
-                    let successState = ValidationState(
-                        isValid: true,
-                        timestamp: Date(),
-                        apiKeyHash: apiKeyHash,
-                        errorMessage: nil
-                    )
-                    saveValidationState(successState, for: selectedProvider)
-                    
                 } else {
                     validationStatus = .invalid("API Key 无效")
-                    
-                    // 保存失败的验证状态
-                    let failureState = ValidationState(
-                        isValid: false,
-                        timestamp: Date(),
-                        apiKeyHash: apiKeyHash,
-                        errorMessage: "API Key 无效"
-                    )
-                    saveValidationState(failureState, for: selectedProvider)
                 }
                 isValidating = false
             }
@@ -206,16 +133,6 @@ class APIManager: ObservableObject {
             await MainActor.run {
                 let errorMessage = error.localizedDescription
                 validationStatus = .invalid(errorMessage)
-                
-                // 保存错误的验证状态
-                let errorState = ValidationState(
-                    isValid: false,
-                    timestamp: Date(),
-                    apiKeyHash: apiKeyHash,
-                    errorMessage: errorMessage
-                )
-                saveValidationState(errorState, for: selectedProvider)
-                
                 isValidating = false
             }
         }
@@ -228,14 +145,12 @@ class APIManager: ObservableObject {
         
         // 针对不同提供商使用不同的验证方式
         let endpoint: String
-        var needsSpecialAuth = false
         
         switch provider.rawValue {
         case "openrouter":
             endpoint = "/models"  // OpenRouter 使用 models 端点验证
         case "aliyun":
             endpoint = "/models"  // 阿里云通义千问使用 models 端点
-            needsSpecialAuth = true  // 阿里云使用不同的认证方式
         default:
             endpoint = "/models"  // 默认使用 models 端点
         }
@@ -377,40 +292,16 @@ class APIManager: ObservableObject {
     func updateAPIKey(_ key: String, for provider: LLMProvider) {
         apiKeys[provider.rawValue] = key
         validationStatus = .none
-        
-        // 如果 API Key 发生变化，清除对应的验证状态
-        let newHash = getAPIKeyHash(key)
-        if let cachedState = validationStates[provider.rawValue],
-           cachedState.apiKeyHash != newHash {
-            validationStates.removeValue(forKey: provider.rawValue)
-            let key = "ValidationState_\(provider.rawValue)"
-            UserDefaults.standard.removeObject(forKey: key)
-        }
     }
     
-    // 获取当前选中提供商的验证状态显示
-    func getCurrentValidationStatusMessage() -> String {
-        if let cachedState = validationStates[selectedProvider.rawValue],
-           !cachedState.isExpired {
-            if cachedState.isValid {
-                let timeAgo = formatTimeAgo(cachedState.timestamp)
-                return "✅ 已验证通过 (\(timeAgo))"
-            } else {
-                let timeAgo = formatTimeAgo(cachedState.timestamp)
-                return "❌ 验证失败 (\(timeAgo)): \(cachedState.errorMessage ?? "未知错误")"
-            }
-        }
-        return ""
-    }
-    
-    private func formatTimeAgo(_ date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 {
-            return "刚刚"
-        } else if interval < 3600 {
-            return "\(Int(interval / 60))分钟前"
-        } else {
-            return "\(Int(interval / 3600))小时前"
+
+}
+
+
+extension View {
+    func hideKeyboardOnTap() -> some View {
+        self.onTapGesture {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
     }
 }
@@ -477,13 +368,7 @@ struct SettingsView: View {
                         SecureField("请输入 \(apiManager.selectedProvider.displayName) API Key", text: currentAPIKey)
                             .textFieldStyle(.roundedBorder)
                         
-                        // 显示缓存的验证状态
-                        let cachedStatusMessage = apiManager.getCurrentValidationStatusMessage()
-                        if !cachedStatusMessage.isEmpty {
-                            Text(cachedStatusMessage)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+
                         
                         // 显示当前验证状态
                         if case .none = apiManager.validationStatus {
@@ -519,7 +404,7 @@ struct SettingsView: View {
                 // 新增 Limitless.AI 设置
                 Section("挂件 Limitless.AI 设置") {
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField("请输入 Limitless.AI API Key", text: $limitlessAPIKey)
+                        SecureField("请输入 Limitless.AI API Key", text: $limitlessAPIKey)
                             .textFieldStyle(.roundedBorder)
                         Button("保存") {
                             UserDefaults.standard.set(limitlessAPIKey, forKey: "LimitlessAIAPIKey")
@@ -537,6 +422,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            .hideKeyboardOnTap()
         }
     }
     
@@ -549,20 +435,7 @@ struct SettingsView: View {
     }
     
     private func getValidationButtonText() -> String {
-        if apiManager.isValidating {
-            return "验证中..."
-        } else {
-            let currentKey = apiManager.apiKeys[apiManager.selectedProvider.rawValue] ?? ""
-            let keyHash = apiManager.getAPIKeyHash(currentKey)
-            
-            if let cachedState = apiManager.validationStates[apiManager.selectedProvider.rawValue],
-               cachedState.apiKeyHash == keyHash,
-               !cachedState.isExpired {
-                return cachedState.isValid ? "重新验证" : "重试验证"
-            } else {
-                return "验证并保存"
-            }
-        }
+        return apiManager.isValidating ? "验证中..." : "验证并保存"
     }
 }
 
@@ -727,32 +600,11 @@ struct LocalView: View {
 struct WidgetView: View {
     var body: some View {
         NavigationView {
-            VStack(spacing: 30) {
-                Image(systemName: "apps.iphone")
-                    .font(.system(size: 80))
-                    .foregroundColor(.purple)
-                
-                Text("挂件功能")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                Text("小组件和快捷方式功能即将推出")
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("桌面小组件", systemImage: "rectangle.3.group")
-                    Label("Siri 快捷指令", systemImage: "mic.badge.plus")
-                    Label("控制中心集成", systemImage: "control")
-                }
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("挂件")
+            LimitlessLifelogsView()
+                .navigationTitle("挂件")
+                .navigationBarTitleDisplayMode(.inline)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.systemGroupedBackground))
         }
     }
 }
@@ -762,29 +614,32 @@ struct RecordView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var themeManager: ThemeManager
     @ObservedObject var apiManager: APIManager
-    @State private var currentStory: VoiceLog?
-    // 动态语言支持 - 从 UserDefaults 加载上次选择
+    
+    // 回调函数，用于通知父视图启动全屏录音
+    let onStartRecording: (VoiceLog, VoiceLogDetailView.LanguageOption, VoiceLogDetailView.LanguageOption) -> Void
+    
     @State private var selectedInputLanguage: VoiceLogDetailView.LanguageOption = {
         if let savedInput = UserDefaults.standard.string(forKey: "SelectedInputLanguage"),
            let language = VoiceLogDetailView.LanguageOption.allCases.first(where: { $0.rawValue == savedInput }) {
             return language
         }
-        return .english // 默认说话语言为英文
+        return .english
     }()
-    
     @State private var selectedTargetLanguage: VoiceLogDetailView.LanguageOption = {
         if let savedTarget = UserDefaults.standard.string(forKey: "SelectedTargetLanguage"),
            let language = VoiceLogDetailView.LanguageOption.allCases.first(where: { $0.rawValue == savedTarget }) {
             return language
         }
-        return .chinese // 默认翻译语言为中文
+        return .chinese
     }()
     @State private var supportedLanguages: Set<String> = []
-    @State private var showFullScreenRecording = false
-    @State private var showDetailView = false
-    @State private var detailStory: VoiceLog?
     @State private var showValidationAlert = false
     @State private var validationMessage = ""
+    
+    init(apiManager: APIManager, onStartRecording: @escaping (VoiceLog, VoiceLogDetailView.LanguageOption, VoiceLogDetailView.LanguageOption) -> Void) {
+        self.apiManager = apiManager
+        self.onStartRecording = onStartRecording
+    }
     
     // 页面加载时拉取支持的语言
     private func loadSupportedLanguages() {
@@ -958,25 +813,7 @@ struct RecordView: View {
     var body: some View {
         NavigationView {
             VStack {
-                if showFullScreenRecording, let story = currentStory {
-                    // 全屏录音界面
-                    FullScreenRecordingView(
-                        story: story,
-                        apiManager: apiManager,
-                        sourceLanguage: selectedInputLanguage,
-                        targetLanguage: selectedTargetLanguage,
-                        onDismiss: { completedStory in
-                            showFullScreenRecording = false
-                            currentStory = nil
-                            
-                            if let story = completedStory {
-                                detailStory = story
-                                showDetailView = true
-                            }
-                        }
-                    )
-                    .environmentObject(themeManager)
-                } else {
+
                     VStack(spacing: 30) {
                         Image(systemName: "waveform.circle.fill")
                             .font(.system(size: 80))
@@ -992,15 +829,11 @@ struct RecordView: View {
                             .multilineTextAlignment(.center)
                         
                         Button {
-                            // 验证语言选择
                             if validateLanguageSelection() {
-                                // 保存用户选择
                                 saveLanguageSelection()
-                                
                                 let newStory = VoiceLog.blank()
                                 modelContext.insert(newStory)
-                                currentStory = newStory
-                                showFullScreenRecording = true
+                                onStartRecording(newStory, selectedInputLanguage, selectedTargetLanguage)
                                 print("Created new story for recording: \(newStory.title)")
                                 print("Selected languages: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
                             } else {
@@ -1027,15 +860,6 @@ struct RecordView: View {
                     .onAppear {
                         loadSupportedLanguages()
                     }
-                }
-            }
-            .navigationBarHidden(showFullScreenRecording)
-            .sheet(isPresented: $showDetailView) {
-                if let story = detailStory {
-                    NavigationView {
-                        VoiceLogDetailView(story: story, apiManager: apiManager)
-                    }
-                }
             }
             .alert("语言设置错误", isPresented: $showValidationAlert) {
                 Button("确定", role: .cancel) { }
@@ -1202,6 +1026,7 @@ struct FullScreenRecordingView: View {
     @State private var isRecording = false
     @State private var isStoppingRecording = false
     @State private var stopCountdown = 0
+    @State private var isGeneratingTitleAndSummary = false
     @State private var translationSession: TranslationSession?
     
     var body: some View {
@@ -1329,6 +1154,20 @@ struct FullScreenRecordingView: View {
                                     .foregroundColor(.red)
                             }
                         }
+                    } else if isGeneratingTitleAndSummary {
+                        VStack(spacing: 2) {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("AI 正在生成标题和摘要...")
+                            }
+                            .foregroundStyle(themeManager.currentTheme == .dark ? .white : .primary)
+                            .font(.caption2)
+                            
+                            Text("请稍候，即将完成")
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.6) : .primary.opacity(0.6))
+                                .font(.caption2)
+                        }
                     }
                     
                     Button {
@@ -1338,13 +1177,17 @@ struct FullScreenRecordingView: View {
                     } label: {
                         ZStack {
                             Circle()
-                                .fill(isRecording ? Color.red : Color.gray)
+                                .fill(isRecording ? Color.red : (isGeneratingTitleAndSummary ? Color.orange : Color.gray))
                                 .frame(width: 60, height: 60)
                             
                             if isRecording {
                                 RoundedRectangle(cornerRadius: 4)
                                     .fill(Color.white)
                                     .frame(width: 20, height: 20)
+                            } else if isGeneratingTitleAndSummary {
+                                Image(systemName: "brain")
+                                    .foregroundColor(.white)
+                                    .font(.title3)
                             } else {
                                 Circle()
                                     .fill(Color.white)
@@ -1354,9 +1197,9 @@ struct FullScreenRecordingView: View {
                         .scaleEffect(isRecording ? 1.1 : 1.0)
                         .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isRecording)
                     }
-                    .disabled(isStoppingRecording)
+                    .disabled(isStoppingRecording || isGeneratingTitleAndSummary)
                     
-                    Text(isRecording ? "点击停止录音" : "准备录音")
+                    Text(isRecording ? "点击停止录音" : (isGeneratingTitleAndSummary ? "AI 处理中..." : "录音已完成"))
                         .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.8) : .primary.opacity(0.8))
                         .font(.caption2)
                 }
@@ -1381,47 +1224,65 @@ struct FullScreenRecordingView: View {
     }
     
     private func setupRecording() {
+        print("🎬 FullScreenRecordingView setupRecording started")
+        
         // 创建转录器和录音器
         speechTranscriber = SpokenWordTranscriber(story: Binding(
             get: { story },
             set: { _ in }
         ))
+        print("🎬 SpokenWordTranscriber created")
         
         recorder = Recorder(transcriber: speechTranscriber, story: Binding(
             get: { story },
             set: { _ in }
         ))
+        print("🎬 Recorder created")
         
         // 设置语言
         Task {
+            print("🎬 Setting up language settings: \(sourceLanguage.rawValue) -> \(targetLanguage.rawValue)")
             await speechTranscriber.updateLanguageSettings(
                 sourceLanguage: sourceLanguage.rawValue,
                 targetLanguage: targetLanguage.rawValue
             )
+            print("🎬 Language settings updated")
             
             // 自动开始录音
+            print("🎬 Starting recording...")
             await startRecording()
         }
     }
     
     private func startRecording() async {
-        guard let recorder = recorder else { return }
+        print("🎬 startRecording called")
+        guard let recorder = recorder else { 
+            print("❌ recorder is nil")
+            return 
+        }
         
+        print("🎬 Requesting microphone authorization...")
         await recorder.requestMicAuthorization()
         
         if recorder.isMicAuthorized {
+            print("✅ Microphone authorized")
             await MainActor.run {
                 isRecording = true
+                print("🎬 isRecording set to true")
             }
             
             do {
+                print("🎬 Starting actual recording...")
                 try await recorder.record()
+                print("✅ Recording started successfully")
             } catch {
-                print("Recording failed: \(error)")
+                print("❌ Recording failed: \(error)")
                 await MainActor.run {
                     isRecording = false
                 }
             }
+        } else {
+            print("❌ Microphone not authorized")
         }
     }
     
@@ -1445,6 +1306,7 @@ struct FullScreenRecordingView: View {
                         story.isDone = true
                         isRecording = false
                         isStoppingRecording = false
+                        isGeneratingTitleAndSummary = true
                     }
                     
                     // 生成标题和摘要
@@ -1452,6 +1314,7 @@ struct FullScreenRecordingView: View {
                     
                     // 跳转到详情页
                     await MainActor.run {
+                        isGeneratingTitleAndSummary = false
                         onDismiss(story)
                     }
                 }
@@ -1475,7 +1338,7 @@ struct FullScreenRecordingView: View {
         // 读取提示词模板
         let prompt: String
         if let templatePath = Bundle.main.path(forResource: "PromptTemplate", ofType: "txt"),
-           let template = try? String(contentsOfFile: templatePath) {
+           let template = try? String(contentsOfFile: templatePath, encoding: .utf8) {
             // 使用模板文件，替换占位符
             prompt = template.replacingOccurrences(of: "{{TRANSCRIPT_TEXT}}", with: transcriptText)
             print("📄 使用模板文件生成提示词")
@@ -1499,11 +1362,13 @@ struct FullScreenRecordingView: View {
         }
         
         print("🤖 发送提示词到 LLM...")
+        print("⏳ 用户界面显示: AI 正在生成标题和摘要...")
         
         do {
             // 使用 APIManager 调用 LLM
             let response = try await callLLM(prompt: prompt)
             print("✅ LLM 响应: \(response)")
+            print("🎯 AI 处理完成，准备解析结果...")
             
             // 清理响应，移除可能的markdown代码块标记
             let cleanedResponse = response
@@ -1754,6 +1619,14 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var isSearching = false
     
+    // 全屏录音相关状态
+    @State private var showFullScreenRecording = false
+    @State private var recordingStory: VoiceLog?
+    @State private var recordingSourceLanguage: VoiceLogDetailView.LanguageOption = .english
+    @State private var recordingTargetLanguage: VoiceLogDetailView.LanguageOption = .chinese
+    @State private var showRecordingDetailView = false
+    @State private var completedRecordingStory: VoiceLog?
+    
     var body: some View {
         ZStack {
             // 主内容：系统TabView
@@ -1770,13 +1643,24 @@ struct ContentView: View {
                         Text("挂件")
                     }
                     .tag(1)
-                RecordView(apiManager: apiManager)
-                    .environmentObject(themeManager)
-                    .tabItem {
-                        Image(systemName: "mic.circle")
-                        Text("录音")
+                RecordView(
+                    apiManager: apiManager,
+                    onStartRecording: { story, sourceLanguage, targetLanguage in
+                        print("🎬 onStartRecording called - setting up full screen recording")
+                        recordingStory = story
+                        recordingSourceLanguage = sourceLanguage
+                        recordingTargetLanguage = targetLanguage
+                        showFullScreenRecording = true
+                        print("🎬 showFullScreenRecording set to: \(showFullScreenRecording)")
+                        print("🎬 recordingStory: \(recordingStory?.title ?? "nil")")
                     }
-                    .tag(2)
+                )
+                .environmentObject(themeManager)
+                .tabItem {
+                    Image(systemName: "mic.circle")
+                    Text("录音")
+                }
+                .tag(2)
                 SettingsView(themeManager: themeManager, apiManager: apiManager)
                     .tabItem {
                         Image(systemName: "gearshape")
@@ -1836,5 +1720,50 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(themeManager.currentTheme.colorScheme)
+        .onChange(of: showFullScreenRecording) { oldValue, newValue in
+            print("🎬 showFullScreenRecording changed: \(oldValue) -> \(newValue)")
+            print("🎬 recordingStory when changed: \(recordingStory?.title ?? "nil")")
+        }
+        .fullScreenCover(isPresented: $showFullScreenRecording) {
+            Group {
+                if let story = recordingStory {
+                    FullScreenRecordingView(
+                        story: story,
+                        apiManager: apiManager,
+                        sourceLanguage: recordingSourceLanguage,
+                        targetLanguage: recordingTargetLanguage,
+                        onDismiss: { completedStory in
+                            showFullScreenRecording = false
+                            recordingStory = nil
+                            if let story = completedStory {
+                                completedRecordingStory = story
+                                showRecordingDetailView = true
+                            }
+                        }
+                    )
+                    .environmentObject(themeManager)
+                    .onAppear {
+                        print("🎬 FullScreenRecordingView appeared for story: \(story.title)")
+                    }
+                } else {
+                    Text("错误：recordingStory 为 nil")
+                        .onAppear {
+                            print("❌ .fullScreenCover triggered but recordingStory is nil")
+                        }
+                }
+            }
+            .onAppear {
+                print("🎬 .fullScreenCover content view appeared")
+                print("🎬 showFullScreenRecording: \(showFullScreenRecording)")
+                print("🎬 recordingStory: \(recordingStory?.title ?? "nil")")
+            }
+        }
+        .sheet(isPresented: $showRecordingDetailView) {
+            if let story = completedRecordingStory {
+                NavigationView {
+                    VoiceLogDetailView(story: story, apiManager: apiManager)
+                }
+            }
+        }
     }
 }
