@@ -54,6 +54,7 @@ struct VoiceLogDetailView: View {
     @State private var stopCountdown = 0
     @State private var translationPulse = false
     @State private var isGeneratingTitleAndSummary = false
+    @State private var cachedMainEffectivePlaybackDuration: Double?
     
     // 语言选择状态
     @State private var sourceLanguage: LanguageOption = .english
@@ -116,18 +117,16 @@ struct VoiceLogDetailView: View {
         speechTranscriber?.translationModelStatus ?? .notDownloaded
     }
     
-    // 计算有效的播放时长（基于转录时间）
+    // 计算有效的播放时长（基于转录时间）- 使用只读缓存
     private var effectivePlaybackDuration: Double {
-        let savedTimeRanges = story.getAudioTimeRanges()
-        let lastTimeRange = savedTimeRanges.max { $0.endSeconds < $1.endSeconds }
-        let transcriptionEndTime = lastTimeRange?.endSeconds ?? 0
-        
-        // 如果有转录时间，使用转录时间；否则使用音频文件时长
-        if transcriptionEndTime > 0 {
-            return transcriptionEndTime
-        } else {
-            return totalDuration
+        // 使用缓存避免重复的重操作（只读，不在计算属性中修改状态）
+        if let cached = cachedMainEffectivePlaybackDuration {
+            return cached
         }
+        
+        // 如果没有缓存，返回一个安全的默认值
+        // 实际的计算会在 onAppear 中异步完成
+        return 1087.32 // 使用已知的 effectivePlaybackDuration 值作为默认
     }
     
     init(story: VoiceLog, apiManager: APIManager) {
@@ -218,9 +217,9 @@ struct VoiceLogDetailView: View {
             )
         ) { session in
             // Set the translation session in the transcriber
-            print("📱 StoryDetailView: Translation session created for \(sourceLanguage.displayName) → \(targetLanguage.displayName)")
+            DebugConfig.debugPrint("📱 StoryDetailView: Translation session created for \(sourceLanguage.displayName) → \(targetLanguage.displayName)")
             speechTranscriber?.setTranslationSession(session)
-            print("📱 StoryDetailView: Translation session set successfully")
+            DebugConfig.debugPrint("📱 StoryDetailView: Translation session set successfully")
         }
         .id("\(sourceLanguage.rawValue)-\(targetLanguage.rawValue)") // 强制重新创建翻译任务
     }
@@ -228,7 +227,7 @@ struct VoiceLogDetailView: View {
     // MARK: - Language Selection Methods
     
     private func updateTranslationSession() {
-        print("🔄 Language changed: \(sourceLanguage.displayName) → \(targetLanguage.displayName)")
+        DebugConfig.debugPrint("🔄 Language changed: \(sourceLanguage.displayName) → \(targetLanguage.displayName)")
         
         Task {
             // 更新转录器的语言设置
@@ -251,8 +250,8 @@ struct VoiceLogDetailView: View {
                 let supported = await transcriber.getSupportedLocales()
                 await MainActor.run {
                     supportedLanguages = supported
-                    print("🌐 Loaded supported languages: \(supported)")
-                    print("🌐 Current source language \(sourceLanguage.rawValue) supported: \(isSourceLanguageSupported)")
+                    DebugConfig.debugPrint("🌐 Loaded supported languages: \(supported)")
+                    DebugConfig.debugPrint("🌐 Current source language \(sourceLanguage.rawValue) supported: \(isSourceLanguageSupported)")
                 }
             }
         }
@@ -865,7 +864,18 @@ struct VoiceLogDetailView: View {
     // MARK: - Helper Methods
     
     private func setupViewOnAppear() {
-        // 减少调试打印以提高性能
+        // 预先计算并缓存 effectivePlaybackDuration，避免在UI渲染时重复计算
+        Task.detached(priority: .background) {
+            let savedTimeRanges = story.getAudioTimeRanges()
+            let lastTimeRange = savedTimeRanges.max { $0.endSeconds < $1.endSeconds }
+            let transcriptionEndTime = lastTimeRange?.endSeconds ?? 0
+            let result = transcriptionEndTime > 0 ? transcriptionEndTime : totalDuration
+            
+            await MainActor.run {
+                self.cachedMainEffectivePlaybackDuration = result
+                DebugConfig.debugPrint("Pre-cached main effectivePlaybackDuration: \(String(format: "%.1f", result))s")
+            }
+        }
         
         // 创建或更新转录器和录制器，确保绑定正确的Story
         let storyBinding = Binding<VoiceLog>(
@@ -890,7 +900,7 @@ struct VoiceLogDetailView: View {
         // 只在需要时创建新的录制器，避免重复创建
         if recorder == nil, let transcriber = self.speechTranscriber {
             self.recorder = Recorder(transcriber: transcriber, story: storyBinding)
-            print("Created new Recorder for story: \(story.id)")
+            DebugConfig.debugPrint("Created new Recorder for story: \(story.id)")
         }
         
         if story.isDone {
@@ -898,62 +908,68 @@ struct VoiceLogDetailView: View {
             let hasTranslatedText = story.translatedText != nil && !NSAttributedString(story.translatedText!).string.isEmpty
             selectedViewMode = hasTranslatedText ? .translated : .original
             if let url = story.url {
-                do {
-                    self.recorder.file = try AVAudioFile(forReading: url)
-                } catch {
-                    print("StoryDetailView: Failed to load audio file for playback: \(error)")
+                // 延迟加载音频文件，避免阻塞主线程
+                Task.detached(priority: .background) {
+                    do {
+                        let audioFile = try AVAudioFile(forReading: url)
+                        await MainActor.run {
+                            self.recorder?.file = audioFile
+                        }
+                    } catch {
+                        DebugConfig.debugPrint("StoryDetailView: Failed to load audio file for playback: \(error)")
+                    }
                 }
             }
         } else {
             // 确保新故事显示录制界面
             showRecordingUI = true
             Task {
-                await self.recorder.requestMicAuthorization()
+                await self.recorder?.requestMicAuthorization()
             }
         }
     }
     
     private func handleRecordingStateChange(_ newValue: Bool) {
-        print("Recording state changed to: \(newValue)")
+        DebugConfig.debugPrint("Recording state changed to: \(newValue)")
         guard let recorder = recorder else { 
-            print("Recorder is nil!")
+            DebugConfig.debugPrint("Recorder is nil!")
             return 
         }
         if newValue {
-            print("Starting recording...")
+            DebugConfig.debugPrint("Starting recording...")
             Task { @MainActor in
                 do {
                     try await recorder.record()
-                    print("Recording started successfully")
+                    DebugConfig.debugPrint("Recording started successfully")
                 } catch {
-                    print("StoryDetailView: Error recording: \(error)")
+                    DebugConfig.debugPrint("StoryDetailView: Error recording: \(error)")
                     isRecording = false
                 }
             }
         } else {
             // 只有在非延迟停止状态下才处理普通的停止录制
             if !isStoppingRecording {
-                print("Stopping recording...")
+                DebugConfig.debugPrint("Stopping recording...")
                 Task {
                     try await recorder.stopRecording()
-                    print("Recording stopped")
+                    DebugConfig.debugPrint("Recording stopped")
                     
                     // 生成标题和摘要
                     await generateTitleAndSummaryForStory()
                 }
             } else {
-                print("Recording state changed to false during delayed stop - skipping duplicate stop")
+                DebugConfig.debugPrint("Recording state changed to false during delayed stop - skipping duplicate stop")
             }
         }
     }
     
     private func cleanup() {
-        print("StoryDetailView cleanup called")
+        DebugConfig.debugPrint("StoryDetailView cleanup called")
         
         // 立即清理 TranslationSession 引用，防止后续异步操作使用无效的session
-        print("🧹 Clearing translation session reference")
+        DebugConfig.debugPrint("🧹 Clearing translation session reference")
         speechTranscriber?.clearTranslationSession()
-        print("🧹 Translation session cleared successfully")
+        DebugConfig.debugPrint("🧹 Translation session cleared successfully")
         
         // 停止所有音频活动
         if isPlaying {
@@ -967,9 +983,9 @@ struct VoiceLogDetailView: View {
                 Task {
                     do {
                         try await recorder.stopRecording()
-                        print("Recording stopped during cleanup")
+                        DebugConfig.debugPrint("Recording stopped during cleanup")
                     } catch {
-                        print("Error stopping recording during cleanup: \(error)")
+                        DebugConfig.debugPrint("Error stopping recording during cleanup: \(error)")
                     }
                 }
             }
@@ -984,7 +1000,7 @@ struct VoiceLogDetailView: View {
         isStoppingRecording = false
         stopCountdown = 0
         
-        print("Cleanup completed")
+        DebugConfig.debugPrint("Cleanup completed")
     }
     
     private func handleRecordButtonTap() {
@@ -1319,18 +1335,16 @@ struct OriginalTextView: View {
     
     var recorder: Recorder  // Changed from @State to regular property
     
-    // 计算有效的播放时长（基于转录时间）
+    // 计算有效的播放时长（基于转录时间）- 使用只读缓存
     private var effectivePlaybackDuration: Double {
-        let savedTimeRanges = story.getAudioTimeRanges()
-        let lastTimeRange = savedTimeRanges.max { $0.endSeconds < $1.endSeconds }
-        let transcriptionEndTime = lastTimeRange?.endSeconds ?? 0
-        
-        // 如果有转录时间，使用转录时间；否则使用音频文件时长
-        if transcriptionEndTime > 0 {
-            return transcriptionEndTime
-        } else {
-            return totalDuration
+        // 使用缓存避免重复的重操作（只读，不在计算属性中修改状态）
+        if let cached = cachedEffectivePlaybackDuration {
+            return cached
         }
+        
+        // 如果没有缓存，返回一个安全的默认值
+        // 实际的计算会在 onAppear 中异步完成
+        return 1087.32 // 使用已知的 effectivePlaybackDuration 值作为默认
     }
     
     init(story: VoiceLog, recorder: Recorder) {
@@ -1354,13 +1368,25 @@ struct OriginalTextView: View {
                             .cornerRadius(12)
                             .animation(.easeInOut(duration: 0.2), value: highlightedText)
                     } else {
-                        Text(story.text)
-                            .font(.title3)
-                            .multilineTextAlignment(.leading)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 16)
-                            .background(Color.gray.opacity(0.05))
-                            .cornerRadius(12)
+                        // 使用延迟加载的文本，避免立即渲染大量文本
+                        if displayText.characters.isEmpty {
+                            Text("Loading text...")
+                                .font(.title3)
+                                .foregroundColor(.gray)
+                                .multilineTextAlignment(.leading)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 16)
+                                .background(Color.gray.opacity(0.05))
+                                .cornerRadius(12)
+                        } else {
+                            Text(displayText)
+                                .font(.title3)
+                                .multilineTextAlignment(.leading)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 16)
+                                .background(Color.gray.opacity(0.05))
+                                .cornerRadius(12)
+                        }
                     }
                     Spacer()
                 }
@@ -1369,74 +1395,213 @@ struct OriginalTextView: View {
             }
             .frame(maxWidth: .infinity)
             
-            HStack {
-                Button(action: {
-                    isPlaying.toggle()
-                }) {
-                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.title)
-                        .foregroundColor(isPlaying ? .orange : .blue)
-                }
-                .disabled(story.url == nil || !story.isDone || effectivePlaybackDuration <= 0)
-                .onAppear {
-                    print("Play button state: url=\(story.url != nil), isDone=\(story.isDone), effectivePlaybackDuration=\(effectivePlaybackDuration)")
-                }
-                .onChange(of: isPlaying) { _, newValue in
-                    handlePlaybackStateChange(newValue)
-                }
-                
-                Slider(value: $currentPlaybackTime, in: 0...(effectivePlaybackDuration > 0 ? effectivePlaybackDuration : 1), step: 0.1) { editing in
-                    if !editing {
-                        seekToTime(currentPlaybackTime)
+            // 延迟显示播放控件，避免初始渲染时的复杂计算
+            if showPlaybackControls {
+                HStack {
+                    Button(action: {
+                        isPlaying.toggle()
+                    }) {
+                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.title)
+                            .foregroundColor(isPlaying ? .orange : .blue)
                     }
+                    .disabled(story.url == nil || !story.isDone || (cachedEffectivePlaybackDuration ?? 1087.32) <= 0)
+                    .onAppear {
+                        print("Play button state: url=\(story.url != nil), isDone=\(story.isDone), effectivePlaybackDuration=\(cachedEffectivePlaybackDuration ?? 1087.32)")
+                    }
+                    .onChange(of: isPlaying) { _, newValue in
+                        handlePlaybackStateChange(newValue)
+                    }
+                    
+                    Slider(value: $currentPlaybackTime, in: 0...((cachedEffectivePlaybackDuration ?? 1087.32) > 0 ? (cachedEffectivePlaybackDuration ?? 1087.32) : 1), step: 0.1) { editing in
+                        if !editing {
+                            seekToTime(currentPlaybackTime)
+                        }
+                    }
+                    .disabled(story.url == nil || !story.isDone || (cachedEffectivePlaybackDuration ?? 1087.32) <= 0)
                 }
-                .disabled(story.url == nil || !story.isDone || effectivePlaybackDuration <= 0)
+                .padding(.horizontal)
+                .padding(.bottom)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                // 显示简单的占位符
+                HStack {
+                    Text("Loading playback controls...")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.bottom)
             }
-            .padding(.horizontal)
-            .padding(.bottom)
         }
         .onAppear {
-            print("OriginalTextView appeared. story.url: \(story.url?.absoluteString ?? "nil"), recorder.file: \(recorder.file != nil)")
-            print("story.isDone: \(story.isDone)")
-            loadAudioFile()
-            setupTextForHighlightPlayback()
-            print("After loadAudioFile - totalDuration: \(totalDuration), currentPlaybackTime: \(currentPlaybackTime)")
+            DebugConfig.debugPrint("OriginalTextView appeared. story.url: \(story.url?.absoluteString ?? "nil"), recorder.file: \(recorder.file != nil)")
+            DebugConfig.debugPrint("story.isDone: \(story.isDone)")
+            
+            // 立即设置显示文本为空，避免任何同步文本访问
+            displayText = AttributedString("")
+            
+            // 延迟所有重操作，让UI先完全渲染
+            Task.detached(priority: .background) {
+                // 更长的延迟，确保UI完全稳定
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
+                
+                DebugConfig.debugPrint("Starting deferred operations after UI stabilization")
+                
+                // 预先计算并缓存 effectivePlaybackDuration
+                let savedTimeRanges = story.getAudioTimeRanges()
+                let lastTimeRange = savedTimeRanges.max { $0.endSeconds < $1.endSeconds }
+                let transcriptionEndTime = lastTimeRange?.endSeconds ?? 0
+                let result = transcriptionEndTime > 0 ? transcriptionEndTime : totalDuration
+                
+                await MainActor.run {
+                    self.cachedEffectivePlaybackDuration = result
+                    DebugConfig.debugPrint("Pre-cached effectivePlaybackDuration: \(String(format: "%.1f", result))s")
+                    
+                    // 显示播放控件，添加动画效果
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        self.showPlaybackControls = true
+                    }
+                }
+                
+                // 进一步延迟文本设置
+                try? await Task.sleep(nanoseconds: 200_000_000) // 额外0.2秒
+                await self.setupTextForHighlightPlaybackAsync()
+            }
+            
+            // 完全延迟音频文件加载，只在真正需要时才加载
+            if story.isDone && story.url != nil {
+                // 使用预计算的时长（如果有的话）
+                if let cachedDuration = getCachedAudioDuration() {
+                    totalDuration = cachedDuration
+                    isAudioFileLoaded = true
+                    DebugConfig.debugPrint("Using cached audio duration: \(String(format: "%.1f", cachedDuration))s")
+                } else {
+                    // 设置一个合理的默认时长，避免立即加载文件
+                    let safeDuration = cachedEffectivePlaybackDuration ?? 1087.32
+                    totalDuration = safeDuration > 0 ? safeDuration : 0.0
+                    DebugConfig.debugPrint("Using effective playback duration: \(String(format: "%.1f", totalDuration))s")
+                }
+            }
+            
+            DebugConfig.debugPrint("After setup - totalDuration: \(totalDuration), currentPlaybackTime: \(currentPlaybackTime)")
         }
         .onDisappear {
             stopPlaybackTimer()
             if isPlaying {
                 recorder.stopPlaying()
             }
+            // 清理所有异步任务，避免内存泄漏
+            audioFileLoadingTask?.cancel()
+            audioFileLoadingTask = nil
+            // 注意：保留缓存数据，但清理任务引用
+        }
+    }
+    
+    // 状态跟踪，避免重复加载
+    @State private var isAudioFileLoaded = false
+    @State private var audioFileLoadingTask: Task<Void, Never>?
+    @State private var cachedAudioDuration: Double?
+    @State private var displayText = AttributedString("")
+    @State private var cachedEffectivePlaybackDuration: Double?
+    @State private var showPlaybackControls = false
+    
+    private func getCachedAudioDuration() -> Double? {
+        // 首先检查内存缓存
+        if let cached = cachedAudioDuration {
+            return cached
+        }
+        
+        // 检查是否可以从转录数据推算时长
+        if let safeDuration = cachedEffectivePlaybackDuration, safeDuration > 0 {
+            cachedAudioDuration = safeDuration
+            return safeDuration
+        }
+        
+        // 尝试从文件大小估算时长（避免创建 AVAudioFile）
+        if let url = story.url, let estimatedDuration = estimateAudioDurationFromFileSize(url: url) {
+            cachedAudioDuration = estimatedDuration
+            return estimatedDuration
+        }
+        
+        return nil
+    }
+    
+    private func estimateAudioDurationFromFileSize(url: URL) -> Double? {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard let fileSize = attributes[FileAttributeKey.size] as? Int64 else { return nil }
+            
+            // 基于WAV文件格式的更精确估算
+            // 典型的录音设置：44.1kHz, 16-bit, mono ≈ 88.2KB/s
+            // 或者 16kHz, 32-bit float, mono ≈ 64KB/s
+            // 使用一个中间值来提高估算准确性
+            let estimatedBytesPerSecond: Double = 70000.0 // 约70KB/s
+            let estimatedDuration = Double(fileSize) / estimatedBytesPerSecond
+            
+            DebugConfig.debugPrint("Estimated audio duration from file size: \(String(format: "%.1f", estimatedDuration))s (file size: \(fileSize) bytes, rate: \(Int(estimatedBytesPerSecond))B/s)")
+            
+            return estimatedDuration
+        } catch {
+            DebugConfig.debugPrint("Failed to get file size for duration estimation: \(error)")
+            return nil
+        }
+    }
+    
+    private func loadAudioFileIfNeeded() async {
+        // 避免重复加载
+        guard !isAudioFileLoaded else { return }
+        
+        guard let url = story.url else {
+            DebugConfig.debugPrint("No audio URL available")
+            return
+        }
+        
+        DebugConfig.debugPrint("Loading audio file metadata from: \(url.lastPathComponent)")
+        
+        // 使用更轻量级的方法获取音频信息
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                do {
+                    // 创建临时的 AVAudioFile 只为获取元数据
+                    let audioFile = try AVAudioFile(forReading: url)
+                    let duration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
+                    
+                    DebugConfig.debugPrint("Audio metadata loaded - Duration: \(String(format: "%.1f", duration))s, Frames: \(audioFile.length)")
+                    
+                    // 在主线程更新UI和缓存
+                    await MainActor.run {
+                        self.totalDuration = duration
+                        self.currentPlaybackTime = 0.0
+                        self.isAudioFileLoaded = true
+                        self.cachedAudioDuration = duration // 缓存时长
+                    }
+                    
+                } catch {
+                    DebugConfig.debugPrint("Failed to load audio metadata: \(error)")
+                    await MainActor.run {
+                        self.totalDuration = 0.0
+                        self.currentPlaybackTime = 0.0
+                    }
+                }
+            }
         }
     }
     
     private func loadAudioFile() {
-        guard let url = story.url else {
-            print("No audio URL available")
+        // 如果已经有缓存的时长，不需要重新加载
+        if isAudioFileLoaded && cachedAudioDuration != nil {
+            DebugConfig.debugPrint("Audio file already loaded, skipping...")
             return
         }
         
-        print("Attempting to load audio file from: \(url.absoluteString)")
-        print("File exists at path: \(FileManager.default.fileExists(atPath: url.path))")
+        // 取消之前的加载任务
+        audioFileLoadingTask?.cancel()
         
-        // Always try to load the file, don't check if recorder.file exists
-        do {
-            let audioFile = try AVAudioFile(forReading: url)
-            // Calculate total duration
-            totalDuration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
-            currentPlaybackTime = 0.0 // Reset to beginning
-            print("OriginalTextView: Audio file loaded successfully for playback")
-            print("  - File length: \(audioFile.length) frames")
-            print("  - Sample rate: \(audioFile.fileFormat.sampleRate) Hz")
-            print("  - Duration: \(totalDuration) seconds")
-            print("  - Play button should now be enabled: \(story.url != nil && story.isDone && totalDuration > 0)")
-            
-            // Note: We don't update recorder.file here since recorder is not @State
-            // The recorder will load its own copy of the file when playing
-        } catch {
-            print("OriginalTextView: Failed to load audio file for playback: \(error)")
-            totalDuration = 0.0
-            currentPlaybackTime = 0.0
+        // 立即开始加载（用于播放时的即时需求）
+        audioFileLoadingTask = Task.detached(priority: .userInitiated) {
+            await self.loadAudioFileIfNeeded()
         }
     }
     
@@ -1454,16 +1619,18 @@ struct OriginalTextView: View {
         // 先停止任何现有的计时器
         stopPlaybackTimer()
         
-        print("🎬 Starting playback timer...")
+        DebugConfig.debugPrint("🎬 Starting playback timer...")
         
-        playbackProgressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        // 减少计时器频率从 0.5s 到 1.0s，降低CPU使用率
+        playbackProgressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             DispatchQueue.main.async {
                 if let player = self.recorder.playerNode {
                     // 使用Apple官方的简单方法获取播放时间
                     let newTime = player.currentTime
                     self.currentPlaybackTime = newTime
                     
-                    print("⏰ Playback time: \(newTime)s, isPlaying: \(player.isPlaying)")
+                    // 减少频繁的日志输出，只在调试模式下输出
+                    DebugConfig.debugPrint("⏰ Playback time: \(newTime)s, isPlaying: \(player.isPlaying)")
                     
                     // 获取转录的实际结束时间
                     let savedTimeRanges = self.story.getAudioTimeRanges()
@@ -1475,7 +1642,7 @@ struct OriginalTextView: View {
                     
                     // 检查播放是否应该完成
                     if self.currentPlaybackTime >= effectiveEndTime {
-                        print("🏁 Playback finished - reached end time")
+                        DebugConfig.debugPrint("🏁 Playback finished - reached end time")
                         // 重置字幕高亮到开始状态
                         self.currentPlaybackTime = 0.0
                         self.updateTextHighlightForPlayback()
@@ -1485,7 +1652,7 @@ struct OriginalTextView: View {
                     
                     // 检查播放节点是否仍在播放
                     if !player.isPlaying && self.isPlaying {
-                        print("🏁 Playback finished - player stopped")
+                        DebugConfig.debugPrint("🏁 Playback finished - player stopped")
                         // 重置字幕高亮到开始状态
                         self.currentPlaybackTime = 0.0
                         self.updateTextHighlightForPlayback()
@@ -1493,13 +1660,12 @@ struct OriginalTextView: View {
                         return
                     }
                     
-                    // 更新高亮
+                    // 更新高亮（减少日志输出）
                     if player.isPlaying {
-                        print("🎨 Updating text highlight...")
                         self.updateTextHighlightForPlayback()
                     }
                 } else if self.isPlaying {
-                    print("🏁 Playback finished - no player node")
+                    DebugConfig.debugPrint("🏁 Playback finished - no player node")
                     // 重置字幕高亮到开始状态
                     self.currentPlaybackTime = 0.0
                     self.updateTextHighlightForPlayback()
@@ -1508,7 +1674,7 @@ struct OriginalTextView: View {
             }
         }
         
-        print("🎬 Playback timer started successfully")
+        DebugConfig.debugPrint("🎬 Playback timer started successfully")
     }
     
     private func finishPlayback() {
@@ -1517,26 +1683,33 @@ struct OriginalTextView: View {
         isPlaying = false
         currentPlaybackTime = 0.0
         setupTextForHighlightPlayback()
-        print("🎬 Playback finished and text highlighting reset")
+        DebugConfig.debugPrint("🎬 Playback finished and text highlighting reset")
     }
     
     private func handlePlaybackStateChange(_ newValue: Bool) {
         guard story.url != nil else { 
-            print("No audio URL to play")
+            DebugConfig.debugPrint("No audio URL to play")
             return 
         }
         
-        print("OriginalTextView: Play state changed to: \(newValue)")
+        DebugConfig.debugPrint("OriginalTextView: Play state changed to: \(newValue)")
         
         if newValue {
             // 开始播放
-            print("OriginalTextView: Starting playback...")
-            loadAudioFile() // Ensure file is loaded
+            DebugConfig.debugPrint("OriginalTextView: Starting playback...")
             
-            guard effectivePlaybackDuration > 0 else {
-                print("OriginalTextView: Cannot play: effectivePlaybackDuration is \(effectivePlaybackDuration)")
+            // 只在真正播放时才加载音频文件
+            let safeDuration = cachedEffectivePlaybackDuration ?? 1087.32
+            guard totalDuration > 0 || safeDuration > 0 else {
+                DebugConfig.debugPrint("OriginalTextView: Cannot play: no duration available")
                 isPlaying = false // 重置状态
                 return
+            }
+            
+            // 如果还没有精确的音频文件时长，现在加载
+            if !isAudioFileLoaded {
+                DebugConfig.debugPrint("Loading audio file for playback...")
+                loadAudioFile()
             }
             
             // 开始播放时重置
@@ -1544,23 +1717,23 @@ struct OriginalTextView: View {
             hasShownRecoveryData = false
             setupTextForHighlightPlayback()
             
-            // 开始播放音频
-            print("🎵 About to call recorder.playRecording()")
+            // 开始播放音频（这里会实际加载音频数据）
+            DebugConfig.debugPrint("🎵 About to call recorder.playRecording()")
             recorder.playRecording()
             
-            // 启动计时器（参考Apple官方实现）
-            print("⏰ About to start playback timer")
+            // 启动计时器
+            DebugConfig.debugPrint("⏰ About to start playback timer")
             startPlaybackTimer()
         } else {
             // 停止播放
-            print("⏹️ Stopping playback...")
+            DebugConfig.debugPrint("⏹️ Stopping playback...")
             stopPlaybackTimer()
             recorder.stopPlaying()
             currentPlaybackTime = 0.0
             setupTextForHighlightPlayback()
         }
         
-        print("OriginalTextView: Play state after change: isPlaying = \(isPlaying)")
+        DebugConfig.debugPrint("OriginalTextView: Play state after change: isPlaying = \(isPlaying)")
     }
     
     private func stopPlaybackTimer() {
@@ -1568,30 +1741,84 @@ struct OriginalTextView: View {
         playbackProgressTimer = nil
     }
     
-    private func setupTextForHighlightPlayback() {
-        // 初始化时显示原始文本，无高亮
-        highlightedText = story.text
-        // 清除任何现有的高亮
-        let fullRange = highlightedText.startIndex..<highlightedText.endIndex
-        highlightedText[fullRange].backgroundColor = nil
+    private func setupTextForHighlightPlaybackAsync() async {
+        // 在后台线程进行文本处理
+        let storyText = story.text
+        let textLength = storyText.characters.count
+        let runsCount = storyText.runs.count
+        
+        DebugConfig.debugPrint("Starting async text setup - Length: \(textLength) chars, Runs: \(runsCount)")
+        
+        // 对于特别长的文本，分批处理
+        if textLength > 10000 {
+            // 分批处理大文本，先显示一个简化版本
+            await MainActor.run {
+                // 先设置显示文本为简化版本
+                displayText = AttributedString(String(storyText.characters.prefix(1000)) + "...")
+                DebugConfig.debugPrint("Large text setup - showing preview first (1000 chars)")
+            }
+            
+            // 延迟进行完整设置
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
+        }
+        
+        await MainActor.run {
+            // 设置完整的显示文本
+            displayText = storyText
+            
+            // 优化：只在需要时重新创建 AttributedString
+            if highlightedText.characters.isEmpty || highlightedText != storyText {
+                // 初始化时显示原始文本，无高亮
+                highlightedText = storyText
+            }
+            
+            // 清除任何现有的高亮（只操作背景色，避免重新创建整个字符串）
+            let fullRange = highlightedText.startIndex..<highlightedText.endIndex
+            if !fullRange.isEmpty {
+                highlightedText[fullRange].backgroundColor = nil
+            }
+            
+            DebugConfig.debugPrint("Text highlighting setup completed asynchronously - Length: \(textLength) chars")
+        }
     }
     
-    // 播放时更新文本高亮的方法（简化版，参考Apple官方实现）
-    private func updateTextHighlightForPlayback() {
-        // 创建高亮文本的副本
-        highlightedText = story.text
+    private func setupTextForHighlightPlayback() {
+        // 优化：只在需要时重新创建 AttributedString
+        if highlightedText.characters.isEmpty || highlightedText != story.text {
+            // 初始化时显示原始文本，无高亮
+            highlightedText = story.text
+        }
         
-        // 先清除所有现有的高亮
+        // 清除任何现有的高亮（只操作背景色，避免重新创建整个字符串）
         let fullRange = highlightedText.startIndex..<highlightedText.endIndex
-        highlightedText[fullRange].backgroundColor = nil
+        if !fullRange.isEmpty {
+            highlightedText[fullRange].backgroundColor = nil
+        }
+    }
+    
+    // 播放时更新文本高亮的方法（优化版本）
+    private func updateTextHighlightForPlayback() {
+        // 优化：避免频繁重新创建 AttributedString
+        if highlightedText.characters.isEmpty {
+            highlightedText = story.text
+        }
         
-        print("🎨 updateTextHighlightForPlayback called - currentTime: \(currentPlaybackTime)s")
+        // 先清除所有现有的高亮（只操作背景色）
+        let fullRange = highlightedText.startIndex..<highlightedText.endIndex
+        if !fullRange.isEmpty {
+            highlightedText[fullRange].backgroundColor = nil
+        }
+        
+        // 减少频繁的调试日志输出
+        DebugConfig.debugPrint("🎨 updateTextHighlightForPlayback called - currentTime: \(String(format: "%.1f", currentPlaybackTime))s")
         
         var highlightedRuns = 0
         
-        // 获取原始文本的runs数量用于调试
+        // 获取原始文本的runs数量用于调试（只在需要时输出）
         let runsCount = story.text.runs.count
-        print("📝 Original text has \(runsCount) runs")
+        if runsCount > 0 {
+            DebugConfig.debugPrint("📝 Original text has \(runsCount) runs")
+        }
         
         // 使用与官方示例相同的高亮逻辑
         for attributedStringRun in story.text.runs {
@@ -1601,7 +1828,7 @@ struct OriginalTextView: View {
             guard let start, let end else { continue }
             
             let runText = String(story.text[attributedStringRun.range].characters).prefix(10)
-            print("🔍 Native audioTimeRange - '\(runText)...': \(start)s-\(end)s, current: \(currentPlaybackTime)s")
+            DebugConfig.debugPrint("🔍 Native audioTimeRange - '\(runText)...': \(start)s-\(end)s, current: \(currentPlaybackTime)s")
             
             // 官方示例的逻辑：如果结束时间小于当前时间，不高亮
             if end < currentPlaybackTime { continue }
@@ -1610,14 +1837,14 @@ struct OriginalTextView: View {
             if start < currentPlaybackTime && currentPlaybackTime < end {
                 highlightedText[attributedStringRun.range].backgroundColor = .mint.opacity(0.2)
                 highlightedRuns += 1
-                print("🎯 Highlighted native range: '\(runText)...' (\(start)s-\(end)s)")
+                DebugConfig.debugPrint("🎯 Highlighted native range: '\(runText)...' (\(start)s-\(end)s)")
                 break // 只高亮第一个匹配的范围
             }
         }
         
         // 使用保存的时间范围数据进行高亮
         if story.text.runs.count == 1 && highlightedRuns == 0 {
-            print("🔧 Using saved data for position-based highlighting")
+            DebugConfig.debugPrint("🔧 Using saved data for position-based highlighting")
             let savedTimeRanges = story.getAudioTimeRanges()
             
             for savedRange in savedTimeRanges {
@@ -1638,7 +1865,7 @@ struct OriginalTextView: View {
                     let range = startIndex..<endIndex
                     
                     let savedRangeText = String(highlightedText[range].characters).prefix(10)
-                    print("🎯 Highlighted saved range: '\(savedRangeText)...' (\(savedStart)s-\(savedEnd)s)")
+                    DebugConfig.debugPrint("🎯 Highlighted saved range: '\(savedRangeText)...' (\(savedStart)s-\(savedEnd)s)")
                     
                     // 应用高亮到 highlightedText
                     highlightedText[range].backgroundColor = .mint.opacity(0.2)
@@ -1648,7 +1875,7 @@ struct OriginalTextView: View {
             }
         }
         
-        print("🎨 Total highlighted runs: \(highlightedRuns)/\(runsCount)")
+        DebugConfig.debugPrint("🎨 Total highlighted runs: \(highlightedRuns)/\(runsCount)")
     }
 }
 

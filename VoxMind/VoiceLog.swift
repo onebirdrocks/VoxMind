@@ -58,7 +58,9 @@ class VoiceLog: Identifiable {
     // 获取保存的时间范围信息（带缓存优化）
     func getAudioTimeRanges() -> [AudioTimeRangeInfo] {
         guard let timeRangeData = audioTimeRangeData else {
+    #if DEBUG
             print("📱 getAudioTimeRanges: No audioTimeRangeData found")
+            #endif
             return []
         }
         
@@ -72,24 +74,30 @@ class VoiceLog: Identifiable {
         
         // 解码数据并更新缓存
         guard let timeRanges = try? JSONDecoder().decode([AudioTimeRangeInfo].self, from: timeRangeData) else {
+    #if DEBUG
             print("📱 getAudioTimeRanges: Failed to decode audioTimeRangeData")
+            #endif
             return []
         }
         
+#if DEBUG
         print("📱 getAudioTimeRanges: Successfully decoded \(timeRanges.count) entries from storage")
+        #endif
         
-        // 打印前几个条目的详细信息进行对比
-        if timeRanges.count <= 10 {
+        // 只在调试模式下输出详细信息，减少性能影响
+        #if DEBUG
+        if timeRanges.count <= 5 {
             timeRanges.enumerated().forEach { index, range in
                 print("   📱 Entry \(index): start=\(String(format: "%.2f", range.startSeconds))s, end=\(String(format: "%.2f", range.endSeconds))s, textRange=\(range.textRange)")
             }
         } else {
-            // 如果条目太多，只打印前5个
-            timeRanges.prefix(5).enumerated().forEach { index, range in
+            // 对于大量数据，只打印前2个条目
+            timeRanges.prefix(2).enumerated().forEach { index, range in
                 print("   📱 Entry \(index): start=\(String(format: "%.2f", range.startSeconds))s, end=\(String(format: "%.2f", range.endSeconds))s, textRange=\(range.textRange)")
             }
-            print("   📱 ... and \(timeRanges.count - 5) more entries")
+            print("   📱 ... and \(timeRanges.count - 2) more entries")
         }
+        #endif
         
         // 更新缓存
         _cachedAudioTimeRanges = timeRanges
@@ -100,26 +108,30 @@ class VoiceLog: Identifiable {
     
     // 设置audioTimeRange数据并清除缓存
     func setAudioTimeRanges(_ timeRanges: [AudioTimeRangeInfo]) {
+        #if DEBUG
         print("💾 setAudioTimeRanges: Attempting to save \(timeRanges.count) entries")
         
-        // 打印要保存的数据详情
-        if timeRanges.count <= 10 {
+        // 只在调试模式下打印详细信息，减少性能影响
+        if timeRanges.count <= 5 {
             timeRanges.enumerated().forEach { index, range in
                 print("   💾 Saving Entry \(index): start=\(String(format: "%.2f", range.startSeconds))s, end=\(String(format: "%.2f", range.endSeconds))s, textRange=\(range.textRange)")
             }
         } else {
-            // 如果条目太多，只打印前5个
-            timeRanges.prefix(5).enumerated().forEach { index, range in
+            // 对于大量数据，只打印前2个条目
+            timeRanges.prefix(2).enumerated().forEach { index, range in
                 print("   💾 Saving Entry \(index): start=\(String(format: "%.2f", range.startSeconds))s, end=\(String(format: "%.2f", range.endSeconds))s, textRange=\(range.textRange)")
             }
-            print("   💾 ... and \(timeRanges.count - 5) more entries to save")
+            print("   💾 ... and \(timeRanges.count - 2) more entries to save")
         }
+        #endif
         
         if let data = try? JSONEncoder().encode(timeRanges) {
             audioTimeRangeData = data
             // 清除缓存，强制重新加载
             _cachedAudioTimeRanges = nil
             _cacheDataHash = nil
+            
+            #if DEBUG
             print("💾 setAudioTimeRanges: Successfully encoded and saved \(timeRanges.count) entries (data size: \(data.count) bytes)")
             
             // 立即验证保存是否成功
@@ -129,8 +141,11 @@ class VoiceLog: Identifiable {
             } else {
                 print("💾 setAudioTimeRanges: ❌ Verification failed - expected \(timeRanges.count) entries, got \(verification.count)")
             }
+            #endif
         } else {
+            #if DEBUG
             print("💾 setAudioTimeRanges: ❌ Failed to encode audioTimeRange data")
+            #endif
         }
     }
     

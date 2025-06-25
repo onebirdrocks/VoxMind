@@ -9,6 +9,13 @@ import AVFoundation
 import SwiftUI
 import Speech
 
+// 本地调试配置
+private func debugPrint(_ items: Any..., separator: String = " ", terminator: String = "\n") {
+    #if DEBUG
+    print(items.map { "\($0)" }.joined(separator: separator), terminator: terminator)
+    #endif
+}
+
 class Recorder {
     private var outputContinuation: AsyncStream<AVAudioPCMBuffer>.Continuation? = nil
     private let audioEngine: AVAudioEngine
@@ -47,13 +54,13 @@ class Recorder {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(for: .wav)
         
-        print("Setting story.url to: \(newURL.absoluteString)")
+        debugPrint("Setting story.url to: \(newURL.absoluteString)")
         self.story.url.wrappedValue = newURL
-        print("Story.url after setting: \(story.url.wrappedValue?.absoluteString ?? "nil")")
+        debugPrint("Story.url after setting: \(story.url.wrappedValue?.absoluteString ?? "nil")")
         if !isMicAuthorized {
             await requestMicAuthorization()
             if !isMicAuthorized {
-                print("Microphone access denied. Cannot record.")
+                debugPrint("Microphone access denied. Cannot record.")
                 throw NSError(domain: "Recorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone access denied."])
             }
         }
@@ -70,7 +77,7 @@ class Recorder {
     }
     
     func stopRecording() async throws {
-        print("Stopping recording...")
+        debugPrint("Stopping recording...")
         
         // 更优雅地停止音频引擎
         if audioEngine.isRunning {
@@ -81,7 +88,7 @@ class Recorder {
         do {
             audioEngine.inputNode.removeTap(onBus: 0)
         } catch {
-            print("Warning: Failed to remove input tap: \(error)")
+            debugPrint("Warning: Failed to remove input tap: \(error)")
         }
         
         // 结束输出流
@@ -95,34 +102,34 @@ class Recorder {
 
         // Close the recording file to ensure all data is written
         if let file = self.file {
-            print("Recording file info before closing:")
-            print("  - File length: \(file.length) frames")
-            print("  - File URL: \(file.url.absoluteString)")
-            print("  - File exists: \(FileManager.default.fileExists(atPath: file.url.path))")
+            debugPrint("Recording file info before closing:")
+            debugPrint("  - File length: \(file.length) frames")
+            debugPrint("  - File URL: \(file.url.absoluteString)")
+            debugPrint("  - File exists: \(FileManager.default.fileExists(atPath: file.url.path))")
         }
         
         // Set file to nil to close it
         self.file = nil
 
         // Finish transcribing BEFORE setting isDone to true, so translation can still be triggered
-        print("Finishing transcription before setting story.isDone...")
+        debugPrint("Finishing transcription before setting story.isDone...")
         try await transcriber.finishTranscribing()
 
-        print("Setting story.isDone to true")
+        debugPrint("Setting story.isDone to true")
         story.isDone.wrappedValue = true
-        print("Story.url: \(story.url.wrappedValue?.absoluteString ?? "nil")")
+        debugPrint("Story.url: \(story.url.wrappedValue?.absoluteString ?? "nil")")
         
         // Check if the file exists and has content
         if let url = story.url.wrappedValue {
             let fileExists = FileManager.default.fileExists(atPath: url.path)
-            print("Audio file exists at story URL: \(fileExists)")
+            debugPrint("Audio file exists at story URL: \(fileExists)")
             if fileExists {
                 do {
                     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
                     let fileSize = attributes[FileAttributeKey.size] as? Int64 ?? 0
-                    print("Audio file size: \(fileSize) bytes")
+                    debugPrint("Audio file size: \(fileSize) bytes")
                 } catch {
-                    print("Failed to get file attributes: \(error)")
+                    debugPrint("Failed to get file attributes: \(error)")
                 }
             }
         }
@@ -161,7 +168,7 @@ class Recorder {
     private func deactivateAudioSession() throws {
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-        print("Audio session deactivated - microphone indicator should turn off")
+        debugPrint("Audio session deactivated - microphone indicator should turn off")
     }
     #endif
     
@@ -169,7 +176,7 @@ class Recorder {
         try setupAudioEngine()
         
         let inputFormat = audioEngine.inputNode.outputFormat(forBus: 0)
-        print("Input format: \(inputFormat)")
+        debugPrint("Input format: \(inputFormat)")
         
         // 创建格式转换器以将输入格式转换为16kHz
         let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, 
@@ -177,7 +184,7 @@ class Recorder {
                                        channels: 1, 
                                        interleaved: false)!
         
-        print("Target format: \(targetFormat)")
+        debugPrint("Target format: \(targetFormat)")
         
         // 使用输入格式进行tap，然后在回调中进行格式转换
         audioEngine.inputNode.installTap(onBus: 0,
@@ -217,21 +224,21 @@ class Recorder {
             throw NSError(domain: "Recorder", code: 2, userInfo: [NSLocalizedDescriptionKey: "No recording URL available"])
         }
         
-        print("Creating audio file with standard 16kHz settings: \(standardSettings)")
+        debugPrint("Creating audio file with standard 16kHz settings: \(standardSettings)")
         
         self.file = try AVAudioFile(forWriting: recordingURL, settings: standardSettings)
-        print("Audio file created successfully")
+        debugPrint("Audio file created successfully")
     }
     
     private func convertBuffer(_ buffer: AVAudioPCMBuffer, from inputFormat: AVAudioFormat, to outputFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
         guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            print("Failed to create audio converter")
+            debugPrint("Failed to create audio converter")
             return nil
         }
         
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * outputFormat.sampleRate / inputFormat.sampleRate)
         guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else {
-            print("Failed to create converted buffer")
+            debugPrint("Failed to create converted buffer")
             return nil
         }
         
@@ -242,7 +249,7 @@ class Recorder {
         }
         
         if status == .error {
-            print("Audio conversion error: \(error?.localizedDescription ?? "Unknown error")")
+            debugPrint("Audio conversion error: \(error?.localizedDescription ?? "Unknown error")")
             return nil
         }
         
@@ -254,19 +261,21 @@ class Recorder {
         do {
             try file.write(from: buffer)
         } catch {
-            print("File writing error: \(error)")
+            debugPrint("File writing error: \(error)")
         }
     }
     
     func playRecording() {
         // Use the story's URL to create a new file for reading
         guard let audioURL = story.url.wrappedValue else {
-            print("Cannot play recording: no audio URL found.")
-            return
-        }
-        
-        print("Attempting to play recording from: \(audioURL.absoluteString)")
-        
+                    debugPrint("Cannot play recording: no audio URL found.")
+        return
+    }
+    
+    debugPrint("Attempting to play recording from: \(audioURL.absoluteString)")
+    
+    // 异步加载音频文件，避免主线程阻塞
+    Task.detached(priority: .userInitiated) {
         // Set up audio session for playback
         #if os(iOS)
         do {
@@ -274,9 +283,10 @@ class Recorder {
             // 使用playAndRecord类别，这样可以避免与录制时的配置冲突
             try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
             try audioSession.setActive(true)
-            print("Audio session configured for playback")
+            debugPrint("Audio session configured for playback")
         } catch {
-            print("Failed to configure audio session for playback: \(error)")
+            debugPrint("Failed to configure audio session for playback: \(error)")
+            return
         }
         #endif
         
@@ -284,11 +294,21 @@ class Recorder {
         let playbackFile: AVAudioFile
         do {
             playbackFile = try AVAudioFile(forReading: audioURL)
-            print("Successfully opened audio file for playback with \(playbackFile.length) frames")
+            debugPrint("Successfully opened audio file for playback with \(playbackFile.length) frames")
         } catch {
-            print("Failed to open audio file for playback: \(error)")
-            return
+            debugPrint("Failed to open audio file for playback: \(error)")
+                return
+            }
+            
+            // 在主线程设置播放
+            await MainActor.run {
+                self.setupPlaybackOnMainThread(with: playbackFile)
+            }
         }
+    }
+    
+    @MainActor
+    private func setupPlaybackOnMainThread(with playbackFile: AVAudioFile) {
         
         // Stop any existing playback more gracefully
         if let existingPlayerNode = playerNode {
@@ -313,13 +333,13 @@ class Recorder {
         
         // 使用文件的原始格式进行播放，让音频引擎处理格式转换
         let fileFormat = playbackFile.processingFormat
-        print("File format: \(fileFormat)")
-        print("Output format: \(audioEngine.outputNode.inputFormat(forBus: 0))")
+        debugPrint("File format: \(fileFormat)")
+        debugPrint("Output format: \(audioEngine.outputNode.inputFormat(forBus: 0))")
         
         audioEngine.connect(newPlayerNode, to: audioEngine.outputNode, format: fileFormat)
         
         newPlayerNode.scheduleFile(playbackFile, at: nil, completionCallbackType: .dataPlayedBack) { _ in
-            print("Playback finished.")
+            debugPrint("Playback finished.")
             DispatchQueue.main.async {
                 // Notify that playback finished if needed
             }
@@ -328,9 +348,9 @@ class Recorder {
         do {
             try audioEngine.start()
             newPlayerNode.play()
-            print("Playback started successfully.")
+            debugPrint("Playback started successfully.")
         } catch {
-            print("Error starting audio engine or playback: \(error)")
+            debugPrint("Error starting audio engine or playback: \(error)")
             
             // 清理失败的播放设置
             newPlayerNode.stop()
@@ -343,7 +363,7 @@ class Recorder {
                 let audioSession = AVAudioSession.sharedInstance()
                 try audioSession.setActive(false)
                 try audioSession.setActive(true)
-                print("Retrying after audio session reset...")
+                DebugConfig.debugPrint("Retrying after audio session reset...")
                 
                 // 重新尝试启动
                 try audioEngine.start()
@@ -353,14 +373,14 @@ class Recorder {
                 audioEngine.attach(retryPlayerNode)
                 audioEngine.connect(retryPlayerNode, to: audioEngine.outputNode, format: fileFormat)
                 retryPlayerNode.scheduleFile(playbackFile, at: nil, completionCallbackType: .dataPlayedBack) { _ in
-                    print("Playback finished.")
+                    DebugConfig.debugPrint("Playback finished.")
                 }
                 
                 retryPlayerNode.play()
                 self.playerNode = retryPlayerNode
-                print("Retry playback started successfully.")
+                DebugConfig.debugPrint("Retry playback started successfully.")
             } catch {
-                print("Retry also failed: \(error)")
+                DebugConfig.debugPrint("Retry also failed: \(error)")
             }
             #endif
         }
@@ -388,7 +408,7 @@ class Recorder {
     }
     
     deinit {
-        print("Recorder deinit called")
+        debugPrint("Recorder deinit called")
         
         // 停止播放
         if let playerNode = playerNode {
@@ -411,6 +431,6 @@ class Recorder {
         // 清理文件引用
         file = nil
         
-        print("Recorder deinit completed")
+        debugPrint("Recorder deinit completed")
     }
 }
