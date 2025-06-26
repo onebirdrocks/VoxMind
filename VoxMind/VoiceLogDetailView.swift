@@ -4,6 +4,18 @@ import AVFoundation
 import Speech
 import Translation // *** Correct Import for Translation Framework ***
 
+// 扩展 View 以支持条件修饰符
+extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
 
 
 // MARK: - AVAudioPlayerNode Extension (参考Apple官方实现)
@@ -114,7 +126,9 @@ struct VoiceLogDetailView: View {
     
     // Access translation status directly from the @Observable transcriber
     private var translationModelStatus: SpokenWordTranscriber.TranslationModelStatus {
-        speechTranscriber?.translationModelStatus ?? .notDownloaded
+        let status = speechTranscriber?.translationModelStatus ?? .notDownloaded
+        DebugConfig.debugPrint("🔍 Translation model status: \(status), speechTranscriber exists: \(speechTranscriber != nil)")
+        return status
     }
     
     // 计算有效的播放时长（基于转录时间）- 使用只读缓存
@@ -148,9 +162,21 @@ struct VoiceLogDetailView: View {
         }
         .onAppear {
             setupViewOnAppear()
-            loadSupportedLanguages()
-            // 确保转录器使用正确的默认语言
-            updateTranslationSession()
+            
+            // 区分已完成录音和正在录制的录音
+            if !story.isDone {
+                // 正在录制的录音：完整的语言支持和翻译会话
+                loadSupportedLanguages()
+                updateTranslationSession()
+            } else {
+                // 已完成的录音：加载语言支持，并设置翻译模型状态为ready（因为文本已经翻译过了）
+                //loadSupportedLanguages()
+                // 对于已完成的录音，如果有翻译文本，则认为翻译模型是可用的
+                if story.translatedText != nil {
+                    speechTranscriber?.translationModelStatus = .ready
+                }
+                DebugConfig.debugPrint("Story is done, loading language support for status checking only")
+            }
         }
         .onChange(of: story.id) { _, newStoryId in
             setupViewOnAppear()
@@ -210,18 +236,21 @@ struct VoiceLogDetailView: View {
                 recorder?.stopPlaying()
             }
         }
-        .translationTask(
-            TranslationSession.Configuration(
-                source: Locale.Language(identifier: sourceLanguage.rawValue),
-                target: Locale.Language(identifier: targetLanguage.rawValue)
-            )
-        ) { session in
-            // Set the translation session in the transcriber
-            DebugConfig.debugPrint("📱 StoryDetailView: Translation session created for \(sourceLanguage.displayName) → \(targetLanguage.displayName)")
-            speechTranscriber?.setTranslationSession(session)
-            DebugConfig.debugPrint("📱 StoryDetailView: Translation session set successfully")
+        // 只有在录音未完成时才创建翻译任务，避免不必要的资源消耗
+        .if(!story.isDone) { view in
+            view.translationTask(
+                TranslationSession.Configuration(
+                    source: Locale.Language(identifier: sourceLanguage.rawValue),
+                    target: Locale.Language(identifier: targetLanguage.rawValue)
+                )
+            ) { session in
+                // Set the translation session in the transcriber
+                DebugConfig.debugPrint("📱 StoryDetailView: Translation session created for \(sourceLanguage.displayName) → \(targetLanguage.displayName)")
+                speechTranscriber?.setTranslationSession(session)
+                DebugConfig.debugPrint("📱 StoryDetailView: Translation session set successfully")
+            }
+            .id("\(sourceLanguage.rawValue)-\(targetLanguage.rawValue)") // 强制重新创建翻译任务
         }
-        .id("\(sourceLanguage.rawValue)-\(targetLanguage.rawValue)") // 强制重新创建翻译任务
     }
     
     // MARK: - Language Selection Methods
@@ -877,6 +906,51 @@ struct VoiceLogDetailView: View {
             }
         }
         
+        // 🚨 重要优化：区分已完成录音和正在录制的录音
+        if story.isDone {
+            // 对于已完成的录音，创建一个最小化的转录器，只用于状态检查
+            // 不进行实际的转录工作，避免性能开销
+            DebugConfig.debugPrint("Story is done, creating minimal transcriber for status checking only")
+            
+            let storyBinding = Binding<VoiceLog>(
+                get: { self.story },
+                set: { _ in /* 已完成录音不需要更新 */ }
+            )
+            
+            if speechTranscriber == nil {
+                self.speechTranscriber = SpokenWordTranscriber(story: storyBinding)
+                DebugConfig.debugPrint("Created minimal transcriber for completed story")
+            } else {
+                DebugConfig.debugPrint("Transcriber already exists for completed story")
+            }
+            
+            // 设置UI状态
+            showRecordingUI = false
+            let hasTranslatedText = story.translatedText != nil && !NSAttributedString(story.translatedText!).string.isEmpty
+            selectedViewMode = hasTranslatedText ? .translated : .original
+            
+            // 如果有音频文件，设置播放器
+            if let url = story.url {
+                // 延迟加载音频文件，避免阻塞主线程
+                Task.detached(priority: .background) {
+                    do {
+                        let audioFile = try AVAudioFile(forReading: url)
+                        await MainActor.run {
+                            if self.recorder == nil {
+                                // 为已完成的录音创建一个播放专用的录制器
+                                self.recorder = Recorder(transcriber: self.speechTranscriber!, story: storyBinding)
+                            }
+                            self.recorder?.file = audioFile
+                        }
+                    } catch {
+                        DebugConfig.debugPrint("StoryDetailView: Failed to load audio file for playback: \(error)")
+                    }
+                }
+            }
+            
+            return // 不进行转录初始化
+        }
+        
         // 创建或更新转录器和录制器，确保绑定正确的Story
         let storyBinding = Binding<VoiceLog>(
             get: { self.story },
@@ -891,9 +965,7 @@ struct VoiceLogDetailView: View {
         } else {
             let transcriber = SpokenWordTranscriber(story: storyBinding)
             // Only reset transcription for new/incomplete stories
-            if !story.isDone {
-                transcriber.resetTranscription()
-            }
+            transcriber.resetTranscription()
             self.speechTranscriber = transcriber
         }
         
@@ -903,29 +975,10 @@ struct VoiceLogDetailView: View {
             DebugConfig.debugPrint("Created new Recorder for story: \(story.id)")
         }
         
-        if story.isDone {
-            showRecordingUI = false
-            let hasTranslatedText = story.translatedText != nil && !NSAttributedString(story.translatedText!).string.isEmpty
-            selectedViewMode = hasTranslatedText ? .translated : .original
-            if let url = story.url {
-                // 延迟加载音频文件，避免阻塞主线程
-                Task.detached(priority: .background) {
-                    do {
-                        let audioFile = try AVAudioFile(forReading: url)
-                        await MainActor.run {
-                            self.recorder?.file = audioFile
-                        }
-                    } catch {
-                        DebugConfig.debugPrint("StoryDetailView: Failed to load audio file for playback: \(error)")
-                    }
-                }
-            }
-        } else {
-            // 确保新故事显示录制界面
-            showRecordingUI = true
-            Task {
-                await self.recorder?.requestMicAuthorization()
-            }
+        // 确保新故事显示录制界面
+        showRecordingUI = true
+        Task {
+            await self.recorder?.requestMicAuthorization()
         }
     }
     
@@ -1438,17 +1491,22 @@ struct OriginalTextView: View {
         .onAppear {
             DebugConfig.debugPrint("OriginalTextView appeared. story.url: \(story.url?.absoluteString ?? "nil"), recorder.file: \(recorder.file != nil)")
             DebugConfig.debugPrint("story.isDone: \(story.isDone)")
+            DebugConfig.debugPrint("story.text.characters.count: \(story.text.characters.count)")
             
-            // 立即设置显示文本为空，避免任何同步文本访问
-            displayText = AttributedString("")
+            // 🚨 立即设置完整文本，避免分批加载
+            if !story.text.characters.isEmpty {
+                displayText = story.text
+                DebugConfig.debugPrint("✅ Set full text immediately - \(story.text.characters.count) chars")
+            } else {
+                displayText = AttributedString("转录文本不可用或为空\n\n字符数: \(story.text.characters.count)\n录音完成: \(story.isDone)")
+                DebugConfig.debugPrint("❌ No text available - showing debug info")
+            }
             
-            // 延迟所有重操作，让UI先完全渲染
+            // 立即显示播放控件，不再延迟
+            showPlaybackControls = true
+            
+            // 在后台计算 effectivePlaybackDuration，但不阻塞UI
             Task.detached(priority: .background) {
-                // 更长的延迟，确保UI完全稳定
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
-                
-                DebugConfig.debugPrint("Starting deferred operations after UI stabilization")
-                
                 // 预先计算并缓存 effectivePlaybackDuration
                 let savedTimeRanges = story.getAudioTimeRanges()
                 let lastTimeRange = savedTimeRanges.max { $0.endSeconds < $1.endSeconds }
@@ -1458,16 +1516,9 @@ struct OriginalTextView: View {
                 await MainActor.run {
                     self.cachedEffectivePlaybackDuration = result
                     DebugConfig.debugPrint("Pre-cached effectivePlaybackDuration: \(String(format: "%.1f", result))s")
-                    
-                    // 显示播放控件，添加动画效果
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        self.showPlaybackControls = true
-                    }
                 }
                 
-                // 进一步延迟文本设置
-                try? await Task.sleep(nanoseconds: 200_000_000) // 额外0.2秒
-                await self.setupTextForHighlightPlaybackAsync()
+                DebugConfig.debugPrint("Starting deferred operations after UI stabilization")
             }
             
             // 完全延迟音频文件加载，只在真正需要时才加载
@@ -1715,7 +1766,16 @@ struct OriginalTextView: View {
             // 开始播放时重置
             currentPlaybackTime = 0.0
             hasShownRecoveryData = false
-            setupTextForHighlightPlayback()
+            
+            // 只在真正开始播放时才初始化文本高亮
+            if highlightedText.characters.isEmpty {
+                DebugConfig.debugPrint("First play - initializing text highlighting")
+                Task {
+                    await setupTextForHighlightPlaybackAsync()
+                }
+            } else {
+                setupTextForHighlightPlayback()
+            }
             
             // 开始播放音频（这里会实际加载音频数据）
             DebugConfig.debugPrint("🎵 About to call recorder.playRecording()")
@@ -1749,21 +1809,8 @@ struct OriginalTextView: View {
         
         DebugConfig.debugPrint("Starting async text setup - Length: \(textLength) chars, Runs: \(runsCount)")
         
-        // 对于特别长的文本，分批处理
-        if textLength > 10000 {
-            // 分批处理大文本，先显示一个简化版本
-            await MainActor.run {
-                // 先设置显示文本为简化版本
-                displayText = AttributedString(String(storyText.characters.prefix(1000)) + "...")
-                DebugConfig.debugPrint("Large text setup - showing preview first (1000 chars)")
-            }
-            
-            // 延迟进行完整设置
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
-        }
-        
         await MainActor.run {
-            // 设置完整的显示文本
+            // 直接设置完整的显示文本，不再分批处理
             displayText = storyText
             
             // 优化：只在需要时重新创建 AttributedString
@@ -1778,7 +1825,7 @@ struct OriginalTextView: View {
                 highlightedText[fullRange].backgroundColor = nil
             }
             
-            DebugConfig.debugPrint("Text highlighting setup completed asynchronously - Length: \(textLength) chars")
+            DebugConfig.debugPrint("Text highlighting setup completed - Length: \(textLength) chars")
         }
     }
     
@@ -1886,57 +1933,59 @@ struct TranslatedTextView: View {
     
     var body: some View {
         VStack {
-            switch translationModelStatus {
-                case .notDownloaded:
-                    VStack {
-                        Text("Translation model not downloaded.")
-                            .foregroundColor(.orange)
-                        Button("Download Translation Model") {
+            // 首先检查是否有已保存的翻译文本
+            if let translatedText = story.translatedText, !NSAttributedString(translatedText).string.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading) {
+                        Text(translatedText)
+                            .font(.title3)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 16)
+                            .background(Color.gray.opacity(0.05))
+                            .cornerRadius(12)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                }
+            } else {
+                // 如果没有保存的翻译文本，则根据翻译模型状态显示相应界面
+                switch translationModelStatus {
+                    case .notDownloaded:
+                        VStack {
+                            Text("Translation model not downloaded.")
+                                .foregroundColor(.orange)
+                            Button("Download Translation Model") {
+                                Task {
+                                    await speechTranscriber?.prepareTranslationModel()
+                                }
+                            }
+                            .padding(.top)
+                        }
+                    case .downloading(let progress):
+                        ProgressView("Downloading Translation Model...", value: progress?.fractionCompleted ?? 0, total: 1.0)
+                            .padding()
+                    case .ready:
+                        Text("Translation is in progress or unavailable.")
+                            .foregroundColor(.gray)
+                    case .failed(let error):
+                        Text("Translation failed: \(error.localizedDescription)")
+                            .foregroundColor(.red)
+                            .padding()
+                        
+                        Button("Retry Translation") {
+                            print("Retry Translation button tapped.")
                             Task {
-                                await speechTranscriber?.prepareTranslationModel()
+                                if let transcriber = speechTranscriber {
+                                    await transcriber.retryTranslation()
+                                }
                             }
                         }
                         .padding(.top)
-                    }
-                case .downloading(let progress):
-                    ProgressView("Downloading Translation Model...", value: progress?.fractionCompleted ?? 0, total: 1.0)
-                        .padding()
-                case .ready:
-                    if let translatedText = story.translatedText, !NSAttributedString(translatedText).string.isEmpty {
-                        ScrollView {
-                            VStack(alignment: .leading) {
-                                Text(translatedText)
-                                    .font(.title3)
-                                    .multilineTextAlignment(.leading)
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 16)
-                                    .background(Color.gray.opacity(0.05))
-                                    .cornerRadius(12)
-                                Spacer()
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                        }
-                    } else {
-                        Text("Translation is in progress or unavailable.")
-                            .foregroundColor(.gray)
-                    }
-                case .failed(let error):
-                    Text("Translation failed: \(error.localizedDescription)")
-                        .foregroundColor(.red)
-                        .padding()
-                    
-                    Button("Retry Translation") {
-                        print("Retry Translation button tapped.")
-                        Task {
-                            if let transcriber = speechTranscriber {
-                                await transcriber.retryTranslation()
-                            }
-                        }
-                    }
-                    .padding(.top)
+                }
+                Spacer()
             }
-            Spacer()
         }
         .frame(maxWidth: .infinity)
     }

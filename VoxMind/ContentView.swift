@@ -187,8 +187,8 @@ class APIManager: ObservableObject {
         
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse {
+        
+        if let httpResponse = response as? HTTPURLResponse {
                 print("📥 验证响应状态码: \(httpResponse.statusCode)")
                 
                 // 打印响应内容以便调试
@@ -215,7 +215,7 @@ class APIManager: ObservableObject {
                         return false
                     } else {
                         print("❌ OpenRouter 验证失败，状态码: \(httpResponse.statusCode)")
-                        return false
+        return false
                     }
                     
                 case "aliyun":
@@ -629,8 +629,8 @@ struct WidgetView: View {
             LimitlessLifelogsView()
                 .navigationTitle("挂件")
                 .navigationBarTitleDisplayMode(.inline)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(.systemGroupedBackground))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
         }
     }
 }
@@ -857,10 +857,10 @@ struct RecordView: View {
                         Button {
                             if validateLanguageSelection() {
                                 saveLanguageSelection()
-                                let newStory = VoiceLog.blank()
-                                modelContext.insert(newStory)
+                            let newStory = VoiceLog.blank()
+                            modelContext.insert(newStory)
                                 onStartRecording(newStory, selectedInputLanguage, selectedTargetLanguage)
-                                print("Created new story for recording: \(newStory.title)")
+                            print("Created new story for recording: \(newStory.title)")
                                 print("Selected languages: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
                             } else {
                                 showValidationAlert = true
@@ -886,7 +886,7 @@ struct RecordView: View {
                     .onAppear {
                         loadSupportedLanguages()
                     }
-            }
+                }
             .alert("语言设置错误", isPresented: $showValidationAlert) {
                 Button("确定", role: .cancel) { }
             } message: {
@@ -1683,11 +1683,11 @@ struct ContentView: View {
                     }
                 )
                 .environmentObject(themeManager)
-                .tabItem {
-                    Image(systemName: "mic.circle")
-                    Text("录音")
-                }
-                .tag(2)
+                    .tabItem {
+                        Image(systemName: "mic.circle")
+                        Text("录音")
+                    }
+                    .tag(2)
                 SettingsView(themeManager: themeManager, apiManager: apiManager)
                     .tabItem {
                         Image(systemName: "gearshape")

@@ -34,20 +34,43 @@ class VoiceLog: Identifiable {
     private var _cachedAudioTimeRanges: [AudioTimeRangeInfo]?
     private var _cacheDataHash: Data?
     
+    // 缓存解码后的主文本，避免频繁解码
+    private var _cachedText: AttributedString?
+    private var _textDataHash: Data?
+    
     // Computed properties for AttributedString access
     var text: AttributedString {
         get {
+            // 检查缓存是否有效
+            if let cached = _cachedText,
+               let cachedHash = _textDataHash,
+               cachedHash == textData {
+                return cached
+            }
+            
             guard let attributedString = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: textData) else {
-                return AttributedString("")
+                let result = AttributedString("")
+                // 更新缓存
+                _cachedText = result
+                _textDataHash = textData
+                return result
             }
             
             let result = AttributedString(attributedString)
+            
+            // 更新缓存
+            _cachedText = result
+            _textDataHash = textData
+            
             return result
         }
         set {
             // 保存基本的 AttributedString
             if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSAttributedString(newValue), requiringSecureCoding: false) {
                 textData = data
+                // 清除缓存
+                _cachedText = nil
+                _textDataHash = nil
             }
             
             // 不要在这里清空audioTimeRangeData，让SpokenWordTranscriber直接管理
@@ -149,20 +172,45 @@ class VoiceLog: Identifiable {
         }
     }
     
+    // 缓存解码后的翻译文本，避免频繁解码
+    private var _cachedTranslatedText: AttributedString?
+    private var _translatedTextDataHash: Data?
+    
     var translatedText: AttributedString? {
         get {
-            guard let data = translatedTextData,
-                  let attributedString = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data) else {
+            guard let data = translatedTextData else { return nil }
+            
+            // 检查缓存是否有效
+            if let cached = _cachedTranslatedText,
+               let cachedHash = _translatedTextDataHash,
+               cachedHash == data {
+                return cached
+            }
+            
+            // 解码数据并更新缓存
+            guard let attributedString = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data) else {
                 return nil
             }
-            return AttributedString(attributedString)
+            
+            let result = AttributedString(attributedString)
+            
+            // 更新缓存
+            _cachedTranslatedText = result
+            _translatedTextDataHash = data
+            
+            return result
         }
         set {
             if let newValue = newValue,
                let data = try? NSKeyedArchiver.archivedData(withRootObject: NSAttributedString(newValue), requiringSecureCoding: false) {
                 translatedTextData = data
+                // 清除缓存
+                _cachedTranslatedText = nil
+                _translatedTextDataHash = nil
             } else {
                 translatedTextData = nil
+                _cachedTranslatedText = nil
+                _translatedTextDataHash = nil
             }
         }
     }

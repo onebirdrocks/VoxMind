@@ -269,11 +269,11 @@ class Recorder {
         // Use the story's URL to create a new file for reading
         guard let audioURL = story.url.wrappedValue else {
                     debugPrint("Cannot play recording: no audio URL found.")
-        return
-    }
-    
+            return
+        }
+        
     debugPrint("Attempting to play recording from: \(audioURL.absoluteString)")
-    
+        
     // 异步加载音频文件，避免主线程阻塞
     Task.detached(priority: .userInitiated) {
         // Set up audio session for playback
@@ -297,8 +297,8 @@ class Recorder {
             debugPrint("Successfully opened audio file for playback with \(playbackFile.length) frames")
         } catch {
             debugPrint("Failed to open audio file for playback: \(error)")
-                return
-            }
+            return
+        }
             
             // 在主线程设置播放
             await MainActor.run {
