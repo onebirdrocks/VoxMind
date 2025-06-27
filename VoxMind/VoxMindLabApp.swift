@@ -9,7 +9,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct OBVoiceLabApp: App {
+struct VoxMindLabApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
