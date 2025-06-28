@@ -1,12 +1,16 @@
 import SwiftUI
+import SwiftData
 
 //挂件列表视图
 struct LifeLogListView: View {
+    @Environment(\.modelContext) private var modelContext
     @State private var lifelogs: [Lifelog] = []
     @State private var isLoading = false
     @State private var errorMessage: String? = nil
     @State private var showDatePicker = false
     @State private var selectedDate = Date()
+    @State private var datesWithData: Set<String> = []
+    @State private var datesLoaded: Set<String> = []
     
     // 按时间分组的生活日志
     private var groupedLifelogs: [TimeGroup] {
@@ -127,7 +131,11 @@ struct LifeLogListView: View {
                         }
                         
                         // 刷新按钮
-                        Button(action: refreshLifelogs) {
+                        Button(action: {
+                            Task {
+                                await forceRefreshDay()
+                            }
+                        }) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 18))
                                 .foregroundColor(.blue)
@@ -199,14 +207,40 @@ struct LifeLogListView: View {
         .sheet(isPresented: $showDatePicker) {
             NavigationView {
                 VStack {
-                    DatePicker("选择日期", selection: $selectedDate, displayedComponents: .date)
-                        .datePickerStyle(.graphical)
-                        .padding()
-                        .onChange(of: selectedDate) { _ in
-                            // 选择日期后立即加载数据，无需确定按钮
-                            showDatePicker = false
-                            refreshLifelogs()
+                    // 状态说明
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Circle()
+                                    .fill(.green)
+                                    .frame(width: 8, height: 8)
+                                Text("有数据")
+                                    .font(.caption)
+                            }
+                            HStack {
+                                Circle()
+                                    .fill(.gray)
+                                    .frame(width: 8, height: 8)
+                                Text("已加载，无数据")
+                                    .font(.caption)
+                            }
                         }
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    
+                    // 自定义日历视图
+                    CalendarDatePicker(
+                        selectedDate: $selectedDate,
+                        datesWithData: datesWithData,
+                        datesLoaded: datesLoaded
+                    ) { newDate in
+                        selectedDate = newDate
+                        showDatePicker = false
+                        refreshLifelogs()
+                    }
+                    .padding()
+                    
                     Spacer()
                 }
                 .navigationTitle("选择日期")
@@ -219,9 +253,10 @@ struct LifeLogListView: View {
                     }
                 }
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
         }
         .onAppear {
+            loadDateStatuses()
             refreshLifelogs()
         }
     }
@@ -250,14 +285,191 @@ struct LifeLogListView: View {
         isLoading = true
         errorMessage = nil
         
+        let dateKey = dateKeyFromDate(selectedDate)
+        let isToday = Calendar.current.isDateInToday(selectedDate)
+        
         do {
-            let fetchedLifelogs = try await fetchLifelogs(for: selectedDate)
-            lifelogs = fetchedLifelogs
+            if isToday {
+                // 当天数据：总是从远程获取最新数据，同时显示本地数据
+                let (localLifelogs, remoteLifelogs) = try await loadTodayData(dateKey: dateKey)
+                
+                // 合并本地和远程数据，去重
+                var combinedLifelogs = localLifelogs
+                for remoteLog in remoteLifelogs {
+                    if !combinedLifelogs.contains(where: { $0.id == remoteLog.id }) {
+                        combinedLifelogs.append(remoteLog)
+                    }
+                }
+                lifelogs = combinedLifelogs
+                
+                // 保存远程数据到本地
+                await saveFetchedLifelogs(remoteLifelogs, dateKey: dateKey)
+                
+            } else {
+                // 非当天数据：优先使用本地缓存
+                let cachedLifelogs = loadCachedLifelogs(for: dateKey)
+                
+                if !cachedLifelogs.isEmpty {
+                    // 使用缓存数据
+                    lifelogs = cachedLifelogs
+                } else {
+                    // 缓存中没有数据，从远程获取
+                    let fetchedLifelogs = try await fetchLifelogs(for: selectedDate)
+                    lifelogs = fetchedLifelogs
+                    
+                    // 保存到本地缓存
+                    await saveFetchedLifelogs(fetchedLifelogs, dateKey: dateKey)
+                }
+                
+                // 更新该日期的加载状态
+                updateDateLoadStatus(dateKey: dateKey, hasData: !lifelogs.isEmpty)
+            }
+            
         } catch {
-            errorMessage = error.localizedDescription
+            // 发生错误时，尝试从本地加载数据
+            let cachedLifelogs = loadCachedLifelogs(for: dateKey)
+            if !cachedLifelogs.isEmpty {
+                lifelogs = cachedLifelogs
+                errorMessage = "使用缓存数据，网络错误: \(error.localizedDescription)"
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
         
         isLoading = false
+        loadDateStatuses() // 更新日历状态
+    }
+    
+    // MARK: - 缓存管理方法
+    
+    private func dateKeyFromDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+    
+    private func loadDateStatuses() {
+        let fetchDescriptor = FetchDescriptor<DateLoadStatus>()
+        if let statuses = try? modelContext.fetch(fetchDescriptor) {
+            datesWithData = Set(statuses.filter(\.hasData).map(\.dateKey))
+            datesLoaded = Set(statuses.map(\.dateKey))
+        }
+    }
+    
+    private func loadCachedLifelogs(for dateKey: String) -> [Lifelog] {
+        let fetchDescriptor = FetchDescriptor<CachedLifelog>(
+            predicate: #Predicate<CachedLifelog> { lifelog in
+                lifelog.dateKey == dateKey
+            },
+            sortBy: [SortDescriptor(\.startTime)]
+        )
+        
+        if let cachedLifelogs = try? modelContext.fetch(fetchDescriptor) {
+            return cachedLifelogs.map { $0.toLifelog() }
+        }
+        
+        return []
+    }
+    
+    private func loadTodayData(dateKey: String) async throws -> ([Lifelog], [Lifelog]) {
+        // 加载本地缓存数据
+        let localLifelogs = loadCachedLifelogs(for: dateKey)
+        
+        // 获取远程数据
+        let remoteLifelogs = try await fetchLifelogs(for: selectedDate)
+        
+        return (localLifelogs, remoteLifelogs)
+    }
+    
+    @MainActor
+    private func saveFetchedLifelogs(_ lifelogs: [Lifelog], dateKey: String) async {
+        for lifelog in lifelogs {
+            // 检查是否已存在
+            let lifelogId = lifelog.id
+            let fetchDescriptor = FetchDescriptor<CachedLifelog>(
+                predicate: #Predicate<CachedLifelog> { cached in
+                    cached.id == lifelogId
+                }
+            )
+            
+            if let existingCached = try? modelContext.fetch(fetchDescriptor).first {
+                // 更新现有记录
+                existingCached.title = lifelog.title
+                existingCached.markdown = lifelog.markdown
+                existingCached.startTime = lifelog.startTime
+                existingCached.endTime = lifelog.endTime
+                existingCached.isStarred = lifelog.isStarred ?? false
+                existingCached.updatedAt = lifelog.updatedAt
+                existingCached.lastFetchedAt = Date()
+                
+                if let contents = lifelog.contents {
+                    existingCached.contentNodes = try? JSONEncoder().encode(contents)
+                }
+            } else {
+                // 创建新记录
+                let cachedLifelog = CachedLifelog(from: lifelog, dateKey: dateKey)
+                modelContext.insert(cachedLifelog)
+            }
+        }
+        
+        // 保存上下文
+        try? modelContext.save()
+        
+        // 更新日期状态
+        updateDateLoadStatus(dateKey: dateKey, hasData: !lifelogs.isEmpty)
+    }
+    
+    private func updateDateLoadStatus(dateKey: String, hasData: Bool) {
+        let fetchDescriptor = FetchDescriptor<DateLoadStatus>(
+            predicate: #Predicate<DateLoadStatus> { status in
+                status.dateKey == dateKey
+            }
+        )
+        
+        if let existingStatus = try? modelContext.fetch(fetchDescriptor).first {
+            existingStatus.hasData = hasData
+            existingStatus.lastLoadedAt = Date()
+        } else {
+            let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
+            modelContext.insert(newStatus)
+        }
+        
+        try? modelContext.save()
+    }
+    
+    // 刷新功能：删除当天所有本地数据，重新获取
+    @MainActor
+    private func forceRefreshDay() async {
+        let dateKey = dateKeyFromDate(selectedDate)
+        
+        // 删除该日期的所有本地数据
+        let fetchDescriptor = FetchDescriptor<CachedLifelog>(
+            predicate: #Predicate<CachedLifelog> { cached in
+                cached.dateKey == dateKey
+            }
+        )
+        
+        if let cachedLifelogs = try? modelContext.fetch(fetchDescriptor) {
+            for cached in cachedLifelogs {
+                modelContext.delete(cached)
+            }
+        }
+        
+        // 删除该日期的加载状态
+        let statusFetchDescriptor = FetchDescriptor<DateLoadStatus>(
+            predicate: #Predicate<DateLoadStatus> { status in
+                status.dateKey == dateKey
+            }
+        )
+        
+        if let status = try? modelContext.fetch(statusFetchDescriptor).first {
+            modelContext.delete(status)
+        }
+        
+        try? modelContext.save()
+        
+        // 重新获取数据
+        await refreshLifelogsAsync()
     }
     
     private func fetchLifelogs(for date: Date) async throws -> [Lifelog] {
@@ -580,7 +792,72 @@ struct ContentNodeView: View {
     }
 }
 
-// MARK: - 数据模型
+// MARK: - SwiftData 模型
+@Model
+class CachedLifelog {
+    @Attribute(.unique) var id: String
+    var title: String
+    var markdown: String?
+    var startTime: String?
+    var endTime: String?
+    var isStarred: Bool
+    var updatedAt: String?
+    var dateKey: String // 用于按日期查询 (YYYY-MM-DD)
+    var contentNodes: Data? // 序列化的 ContentNode 数组
+    var createdAt: Date
+    var lastFetchedAt: Date // 最后一次从服务器获取的时间
+    
+    init(from lifelog: Lifelog, dateKey: String) {
+        self.id = lifelog.id
+        self.title = lifelog.title
+        self.markdown = lifelog.markdown
+        self.startTime = lifelog.startTime
+        self.endTime = lifelog.endTime
+        self.isStarred = lifelog.isStarred ?? false
+        self.updatedAt = lifelog.updatedAt
+        self.dateKey = dateKey
+        self.createdAt = Date()
+        self.lastFetchedAt = Date()
+        
+        // 序列化 ContentNode 数组
+        if let contents = lifelog.contents {
+            self.contentNodes = try? JSONEncoder().encode(contents)
+        }
+    }
+    
+    func toLifelog() -> Lifelog {
+        var contents: [ContentNode]? = nil
+        if let contentNodes = self.contentNodes {
+            contents = try? JSONDecoder().decode([ContentNode].self, from: contentNodes)
+        }
+        
+        return Lifelog(
+            id: id,
+            title: title,
+            markdown: markdown,
+            contents: contents,
+            startTime: startTime,
+            endTime: endTime,
+            isStarred: isStarred,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+@Model
+class DateLoadStatus {
+    @Attribute(.unique) var dateKey: String // YYYY-MM-DD
+    var hasData: Bool
+    var lastLoadedAt: Date
+    
+    init(dateKey: String, hasData: Bool) {
+        self.dateKey = dateKey
+        self.hasData = hasData
+        self.lastLoadedAt = Date()
+    }
+}
+
+// MARK: - API 响应数据模型
 struct Lifelog: Identifiable, Decodable {
     let id: String
     let title: String
@@ -592,7 +869,7 @@ struct Lifelog: Identifiable, Decodable {
     let updatedAt: String?
 }
 
-struct ContentNode: Decodable, Hashable {
+struct ContentNode: Hashable, Codable {
     let type: String
     let content: String
     let startTime: String?
@@ -879,6 +1156,173 @@ struct TimelineLifelogCardView: View {
         }
         
         return "00:00"
+    }
+}
+
+// MARK: - 自定义日历选择器
+struct CalendarDatePicker: View {
+    @Binding var selectedDate: Date
+    let datesWithData: Set<String>
+    let datesLoaded: Set<String>
+    let onDateSelected: (Date) -> Void
+    
+    @State private var displayedMonth = Date()
+    
+    var body: some View {
+        VStack {
+            // 月份导航
+            HStack {
+                Button(action: {
+                    displayedMonth = Calendar.current.date(byAdding: .month, value: -1, to: displayedMonth) ?? displayedMonth
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                }
+                
+                Spacer()
+                
+                Text(monthYearString(displayedMonth))
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                Button(action: {
+                    displayedMonth = Calendar.current.date(byAdding: .month, value: 1, to: displayedMonth) ?? displayedMonth
+                }) {
+                    Image(systemName: "chevron.right")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(.horizontal)
+            
+            // 周几标题
+            HStack {
+                ForEach(["日", "一", "二", "三", "四", "五", "六"], id: \.self) { day in
+                    Text(day)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.horizontal)
+            
+            // 日期网格
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
+                ForEach(daysInMonth(), id: \.self) { date in
+                    if let date = date {
+                        DayCell(
+                            date: date,
+                            isSelected: Calendar.current.isDate(date, inSameDayAs: selectedDate),
+                            isToday: Calendar.current.isDateInToday(date),
+                            hasData: datesWithData.contains(dateKeyFromDate(date)),
+                            wasLoaded: datesLoaded.contains(dateKeyFromDate(date))
+                        ) {
+                            onDateSelected(date)
+                        }
+                    } else {
+                        Text("")
+                            .frame(height: 40)
+                    }
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    private func monthYearString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年 M月"
+        return formatter.string(from: date)
+    }
+    
+    private func dateKeyFromDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+    
+    private func daysInMonth() -> [Date?] {
+        let calendar = Calendar.current
+        let startOfMonth = calendar.dateInterval(of: .month, for: displayedMonth)?.start ?? displayedMonth
+        let range = calendar.range(of: .day, in: .month, for: displayedMonth)?.count ?? 30
+        
+        let firstWeekday = calendar.component(.weekday, from: startOfMonth)
+        let offsetDays = (firstWeekday + 5) % 7 // 调整为周一开始
+        
+        var days: [Date?] = Array(repeating: nil, count: offsetDays)
+        
+        for day in 1...range {
+            if let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
+                days.append(date)
+            }
+        }
+        
+        return days
+    }
+}
+
+struct DayCell: View {
+    let date: Date
+    let isSelected: Bool
+    let isToday: Bool
+    let hasData: Bool
+    let wasLoaded: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                // 背景圆圈
+                Circle()
+                    .fill(backgroundColor)
+                    .frame(width: 36, height: 36)
+                
+                // 日期数字
+                Text("\(Calendar.current.component(.day, from: date))")
+                    .font(.system(size: 16, weight: isSelected ? .bold : .medium))
+                    .foregroundColor(textColor)
+                
+                // 数据状态指示器
+                if hasData || wasLoaded {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Circle()
+                                .fill(hasData ? .green : .gray)
+                                .frame(width: 6, height: 6)
+                                .offset(x: 2, y: -2)
+                        }
+                    }
+                    .frame(width: 36, height: 36)
+                }
+            }
+        }
+        .frame(height: 40)
+    }
+    
+    private var backgroundColor: Color {
+        if isSelected {
+            return .blue
+        } else if isToday {
+            return .blue.opacity(0.2)
+        } else {
+            return .clear
+        }
+    }
+    
+    private var textColor: Color {
+        if isSelected {
+            return .white
+        } else if isToday {
+            return .blue
+        } else {
+            return .primary
+        }
     }
 }
 
