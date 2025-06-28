@@ -62,7 +62,7 @@ struct ContentView: View {
                 .environmentObject(themeManager)
                     .tabItem {
                         Image(systemName: "mic.circle")
-                        Text("录音")
+                        Text("转录")
                     }
                     .tag(2)
                 SettingsView(themeManager: themeManager, apiManager: apiManager)

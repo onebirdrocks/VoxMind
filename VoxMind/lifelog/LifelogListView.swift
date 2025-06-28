@@ -221,7 +221,7 @@ struct LifeLogListView: View {
                                 Circle()
                                     .fill(.gray)
                                     .frame(width: 8, height: 8)
-                                Text("已加载，无数据")
+                                Text("无数据")
                                     .font(.caption)
                             }
                         }
