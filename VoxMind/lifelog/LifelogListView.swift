@@ -289,16 +289,20 @@ struct LifelogCardView: View {
 struct ContentNodeView: View {
     let node: ContentNode
     let level: Int
+    @State private var isExpanded: Bool = true
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
                 // 根据层级添加缩进
                 if level > 0 {
                     Rectangle()
                         .fill(Color.clear)
-                        .frame(width: CGFloat(level * 16))
+                        .frame(width: CGFloat(level * 12))
                 }
+                
+                // 显示图标或箭头
+                nodeIconView
                 
                 // 根据节点类型显示不同的样式
                 nodeContentView
@@ -306,8 +310,8 @@ struct ContentNodeView: View {
                 Spacer()
             }
             
-            // 递归显示子节点
-            if let children = node.children, !children.isEmpty {
+            // 递归显示子节点（如果展开且有子节点）
+            if isExpanded, let children = node.children, !children.isEmpty {
                 ForEach(children, id: \.hashValue) { child in
                     ContentNodeView(node: child, level: level + 1)
                 }
@@ -316,31 +320,83 @@ struct ContentNodeView: View {
     }
     
     @ViewBuilder
+    private var nodeIconView: some View {
+        switch node.type {
+        case "heading1":
+            Image(systemName: "doc.text")
+                .foregroundColor(.blue)
+                .font(.system(size: 14))
+                
+        case "heading2":
+            if hasChildren {
+                Button(action: { isExpanded.toggle() }) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .foregroundColor(.blue)
+                        .font(.system(size: 12))
+                }
+            } else {
+                Image(systemName: "h2.square")
+                    .foregroundColor(.blue)
+                    .font(.system(size: 12))
+            }
+                
+        case "heading3":
+            if hasChildren {
+                Button(action: { isExpanded.toggle() }) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .foregroundColor(.blue)
+                        .font(.system(size: 12))
+                }
+            } else {
+                Image(systemName: "h3.square")
+                    .foregroundColor(.blue)
+                    .font(.system(size: 12))
+            }
+                
+        case "blockquote":
+            Image(systemName: "quote.bubble")
+                .foregroundColor(.orange)
+                .font(.system(size: 12))
+                
+        case "paragraph":
+            Image(systemName: "text.alignleft")
+                .foregroundColor(.gray)
+                .font(.system(size: 12))
+                
+        default:
+            Image(systemName: "circle.fill")
+                .foregroundColor(.gray)
+                .font(.system(size: 8))
+        }
+    }
+    
+    private var hasChildren: Bool {
+        return node.children?.isEmpty == false
+    }
+    
+    @ViewBuilder
     private var nodeContentView: some View {
         switch node.type {
         case "heading1":
-            HStack {
-                Text("# \(node.content)")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-            }
+            Text(node.content)
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.leading)
             
         case "heading2":
-            HStack {
-                Text("## \(node.content)")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-            }
+            Text(node.content)
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.leading)
             
         case "heading3":
-            HStack {
-                Text("### \(node.content)")
-                    .font(.headline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-            }
+            Text(node.content)
+                .font(.headline)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.leading)
             
         case "blockquote":
             HStack(alignment: .top, spacing: 8) {
