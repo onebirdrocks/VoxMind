@@ -8,6 +8,53 @@ struct LifeLogListView: View {
     @State private var showDatePicker = false
     @State private var selectedDate = Date()
     
+    // 按时间分组的生活日志
+    private var groupedLifelogs: [TimeGroup] {
+        let sortedLifelogs = lifelogs.sorted { lifelog1, lifelog2 in
+            guard let time1 = lifelog1.startTime, let time2 = lifelog2.startTime else { return false }
+            return time1 < time2
+        }
+        
+        var groups: [TimeGroup] = []
+        var currentGroup: [Lifelog] = []
+        var currentHour: Int?
+        
+        for lifelog in sortedLifelogs {
+            guard let startTime = lifelog.startTime else { continue }
+            let hour = hourFromTimeString(startTime)
+            
+            if currentHour == nil {
+                currentHour = hour
+                currentGroup = [lifelog]
+            } else if currentHour == hour {
+                currentGroup.append(lifelog)
+            } else {
+                if !currentGroup.isEmpty {
+                    groups.append(TimeGroup(hour: currentHour!, lifelogs: currentGroup))
+                }
+                currentGroup = [lifelog]
+                currentHour = hour
+            }
+        }
+        
+        if !currentGroup.isEmpty, let hour = currentHour {
+            groups.append(TimeGroup(hour: hour, lifelogs: currentGroup))
+        }
+        
+        return groups
+    }
+    
+    private func hourFromTimeString(_ timeString: String) -> Int {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+        
+        if let date = formatter.date(from: timeString) {
+            let calendar = Calendar.current
+            return calendar.component(.hour, from: date)
+        }
+        return 0
+    }
+    
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -82,22 +129,25 @@ struct LifeLogListView: View {
                     }
                     Spacer()
                 } else {
-                    // 生活日志列表
+                    // 生活日志列表 - 时间轴视图
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(lifelogs, id: \.id) { lifelog in
-                                LifelogCardView(lifelog: lifelog)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
+                            ForEach(Array(groupedLifelogs.enumerated()), id: \.offset) { index, timeGroup in
+                                TimelineGroupView(
+                                    timeGroup: timeGroup,
+                                    isFirst: index == 0,
+                                    isLast: index == groupedLifelogs.count - 1
+                                )
                             }
                         }
+                        .padding(.horizontal, 16)
                     }
                     .refreshable {
                         await refreshLifelogsAsync()
                     }
                 }
             }
-            .background(.background.secondary)
+            .background(.gray.opacity(0.1))
             .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $showDatePicker) {
@@ -323,50 +373,64 @@ struct ContentNodeView: View {
     private var nodeIconView: some View {
         switch node.type {
         case "heading1":
-            Image(systemName: "doc.text")
+            Image(systemName: "doc.text.fill")
                 .foregroundColor(.blue)
-                .font(.system(size: 14))
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 20)
                 
         case "heading2":
             if hasChildren {
-                Button(action: { isExpanded.toggle() }) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                Button(action: { 
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    Image(systemName: isExpanded ? "chevron.down.circle.fill" : "chevron.right.circle.fill")
                         .foregroundColor(.blue)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14, weight: .medium))
                 }
             } else {
-                Image(systemName: "h2.square")
+                Image(systemName: "2.square.fill")
                     .foregroundColor(.blue)
-                    .font(.system(size: 12))
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20)
             }
                 
         case "heading3":
             if hasChildren {
-                Button(action: { isExpanded.toggle() }) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                Button(action: { 
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    Image(systemName: isExpanded ? "chevron.down.circle.fill" : "chevron.right.circle.fill")
                         .foregroundColor(.blue)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14, weight: .medium))
                 }
             } else {
-                Image(systemName: "h3.square")
+                Image(systemName: "3.square.fill")
                     .foregroundColor(.blue)
-                    .font(.system(size: 12))
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20)
             }
                 
         case "blockquote":
-            Image(systemName: "quote.bubble")
+            Image(systemName: "quote.bubble.fill")
                 .foregroundColor(.orange)
-                .font(.system(size: 12))
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 20)
                 
         case "paragraph":
             Image(systemName: "text.alignleft")
-                .foregroundColor(.gray)
-                .font(.system(size: 12))
+                .foregroundColor(.gray.opacity(0.7))
+                .font(.system(size: 13, weight: .regular))
+                .frame(width: 20)
                 
         default:
             Image(systemName: "circle.fill")
-                .foregroundColor(.gray)
-                .font(.system(size: 8))
+                .foregroundColor(.gray.opacity(0.5))
+                .font(.system(size: 10))
+                .frame(width: 20)
         }
     }
     
@@ -379,59 +443,62 @@ struct ContentNodeView: View {
         switch node.type {
         case "heading1":
             Text(node.content)
-                .font(.title2)
-                .fontWeight(.bold)
+                .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.primary)
-                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 2)
             
         case "heading2":
             Text(node.content)
-                .font(.title3)
-                .fontWeight(.semibold)
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(.primary)
-                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 1)
             
         case "heading3":
             Text(node.content)
-                .font(.headline)
-                .fontWeight(.medium)
+                .font(.system(size: 15, weight: .medium))
                 .foregroundColor(.primary)
-                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 1)
             
         case "blockquote":
             HStack(alignment: .top, spacing: 8) {
                 Rectangle()
-                    .fill(Color.blue)
-                    .frame(width: 3)
+                    .fill(Color.orange)
+                    .frame(width: 4)
+                    .cornerRadius(2)
                 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(node.content)
-                        .font(.body)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(.black.opacity(0.8))
                         .italic()
+                        .fixedSize(horizontal: false, vertical: true)
                     
                     if let speaker = node.speakerName, !speaker.isEmpty {
                         Text("— \(speaker)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fontWeight(.medium)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.orange)
                     }
                 }
             }
-            .padding(.leading, 8)
-                                      .background(.gray.opacity(0.1))
-            .cornerRadius(6)
+            .padding(.all, 10)
+            .background(.orange.opacity(0.05))
+            .cornerRadius(8)
             
         case "paragraph":
             Text(node.content)
-                .font(.body)
-                .foregroundColor(.primary)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundColor(.black.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
             
         default:
             Text(node.content)
-                .font(.body)
-                .foregroundColor(.primary)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundColor(.black.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -482,6 +549,194 @@ struct LifelogsResponse: Decodable {
             let nextCursor: String?
             let count: Int?
         }
+    }
+}
+
+// MARK: - 时间分组数据结构
+struct TimeGroup {
+    let hour: Int
+    let lifelogs: [Lifelog]
+    
+    var timeRange: String {
+        let endHour = hour + 1
+        return String(format: "%02d:00", hour)
+    }
+    
+    var displayTime: String {
+        return String(format: "%02d:00", hour)
+    }
+}
+
+// MARK: - 时间轴组视图
+struct TimelineGroupView: View {
+    let timeGroup: TimeGroup
+    let isFirst: Bool
+    let isLast: Bool
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            // 左侧时间轴
+            VStack(spacing: 0) {
+                // 上方连接线
+                if !isFirst {
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.4))
+                        .frame(width: 3, height: 24)
+                }
+                
+                // 时间点和时间标签
+                VStack(spacing: 6) {
+                    // 时间点
+                    ZStack {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 16, height: 16)
+                        
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 8, height: 8)
+                    }
+                    
+                    // 时间标签
+                    Text(timeGroup.displayTime)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.blue.opacity(0.15))
+                        .cornerRadius(8)
+                }
+                
+                // 下方连接线
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.4))
+                        .frame(width: 3)
+                        .frame(minHeight: calculateMinHeight())
+                }
+            }
+            .frame(width: 50)
+            
+            // 右侧内容区域
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(timeGroup.lifelogs, id: \.id) { lifelog in
+                    TimelineLifelogCardView(lifelog: lifelog)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 12)
+    }
+    
+    private func calculateMinHeight() -> CGFloat {
+        // 根据该时间段的日志数量动态计算连接线高度
+        let baseHeight: CGFloat = 80
+        let additionalHeight: CGFloat = CGFloat(max(0, timeGroup.lifelogs.count - 1)) * 60
+        return baseHeight + additionalHeight
+    }
+}
+
+// MARK: - 时间轴日志卡片视图
+struct TimelineLifelogCardView: View {
+    let lifelog: Lifelog
+    @State private var isExpanded = false
+    
+    // 过滤掉第一个 heading1（避免与标题重复）
+    private var filteredContents: [ContentNode] {
+        guard let contents = lifelog.contents, !contents.isEmpty else { return [] }
+        
+        // 如果第一个节点是 heading1 且内容与标题相同，则跳过它
+        if contents.first?.type == "heading1" && contents.first?.content == lifelog.title {
+            return Array(contents.dropFirst())
+        }
+        
+        return contents
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // 标题栏
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(lifelog.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(isExpanded ? nil : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    HStack(spacing: 8) {
+                        if let startTime = lifelog.startTime {
+                            Text(formatTime(startTime))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.blue)
+                        }
+                        
+                        if let endTime = lifelog.endTime {
+                            Text("- \(formatTime(endTime))")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.blue)
+                        }
+                        
+                        Spacer()
+                        
+                        if lifelog.isStarred == true {
+                            Image(systemName: "star.fill")
+                                .foregroundColor(.orange)
+                                .font(.system(size: 12))
+                        }
+                    }
+                }
+                
+                Spacer()
+                
+                if !filteredContents.isEmpty {
+                    Button(action: { 
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.blue)
+                    }
+                }
+            }
+            
+            // 内容区域（可展开）
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider()
+                        .background(.gray.opacity(0.3))
+                    
+                    ForEach(filteredContents, id: \.hashValue) { content in
+                        ContentNodeView(node: content, level: 0)
+                    }
+                }
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(14)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 2)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(.gray.opacity(0.15), lineWidth: 0.5)
+        )
+    }
+    
+    private func formatTime(_ dateString: String) -> String {
+        let inputFormatter = DateFormatter()
+        inputFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+        
+        let outputFormatter = DateFormatter()
+        outputFormatter.dateFormat = "HH:mm"
+        
+        if let date = inputFormatter.date(from: dateString) {
+            return outputFormatter.string(from: date)
+        }
+        return dateString
     }
 }
 
