@@ -15,44 +15,90 @@ struct LifeLogListView: View {
             return time1 < time2
         }
         
+        print("📊 总共 \(lifelogs.count) 条日志需要分组")
+        
         var groups: [TimeGroup] = []
         var currentGroup: [Lifelog] = []
-        var currentHour: Int?
+        var currentTimeSlot: String?
         
         for lifelog in sortedLifelogs {
-            guard let startTime = lifelog.startTime else { continue }
-            let hour = hourFromTimeString(startTime)
+            guard let startTime = lifelog.startTime else { 
+                print("⚠️ 跳过无时间的日志: \(lifelog.title)")
+                continue 
+            }
             
-            if currentHour == nil {
-                currentHour = hour
+            let timeSlot = getTimeSlotFromString(startTime)
+            print("📅 日志 '\(lifelog.title)' 时间: \(startTime) -> 时间段: \(timeSlot)")
+            
+            if currentTimeSlot == nil {
+                currentTimeSlot = timeSlot
                 currentGroup = [lifelog]
-            } else if currentHour == hour {
+            } else if currentTimeSlot == timeSlot {
                 currentGroup.append(lifelog)
             } else {
                 if !currentGroup.isEmpty {
-                    groups.append(TimeGroup(hour: currentHour!, lifelogs: currentGroup))
+                    let hour = hourFromTimeSlot(currentTimeSlot!)
+                    groups.append(TimeGroup(hour: hour, lifelogs: currentGroup))
+                    print("✅ 创建时间组: \(currentTimeSlot!) 包含 \(currentGroup.count) 条日志")
                 }
                 currentGroup = [lifelog]
-                currentHour = hour
+                currentTimeSlot = timeSlot
             }
         }
         
-        if !currentGroup.isEmpty, let hour = currentHour {
+        if !currentGroup.isEmpty, let timeSlot = currentTimeSlot {
+            let hour = hourFromTimeSlot(timeSlot)
             groups.append(TimeGroup(hour: hour, lifelogs: currentGroup))
+            print("✅ 创建最后一个时间组: \(timeSlot) 包含 \(currentGroup.count) 条日志")
         }
         
+        print("🎯 最终创建了 \(groups.count) 个时间组")
         return groups
     }
     
-    private func hourFromTimeString(_ timeString: String) -> Int {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+    private func getTimeSlotFromString(_ timeString: String) -> String {
+        // 尝试多种日期格式解析时间
+        let formatters = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+        ]
         
-        if let date = formatter.date(from: timeString) {
-            let calendar = Calendar.current
-            return calendar.component(.hour, from: date)
+        for formatString in formatters {
+            let formatter = DateFormatter()
+            formatter.dateFormat = formatString
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            
+            if let date = formatter.date(from: timeString) {
+                let calendar = Calendar.current
+                let hour = calendar.component(.hour, from: date)
+                let minute = calendar.component(.minute, from: date)
+                
+                // 按30分钟分组：如果分钟数 >= 30，则归入下半小时
+                let timeSlot = minute >= 30 ? "\(hour):30" : "\(hour):00"
+                return timeSlot
+            }
+        }
+        
+        print("⚠️ 时间解析失败: \(timeString)")
+        return "00:00"
+    }
+    
+    private func hourFromTimeSlot(_ timeSlot: String) -> Int {
+        let components = timeSlot.split(separator: ":")
+        if let hourString = components.first, let hour = Int(hourString) {
+            return hour
         }
         return 0
+    }
+    
+    private func hourFromTimeString(_ timeString: String) -> Int {
+        let timeSlot = getTimeSlotFromString(timeString)
+        return hourFromTimeSlot(timeSlot)
     }
     
     var body: some View {
@@ -563,6 +609,36 @@ struct TimeGroup {
     }
     
     var displayTime: String {
+        // 如果该时间组有日志，尝试获取更精确的时间
+        if let firstLog = lifelogs.first,
+           let startTime = firstLog.startTime {
+            
+            // 尝试解析分钟信息
+            let formatters = [
+                "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyy-MM-dd'T'HH:mm:ssZ",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss",
+            ]
+            
+            for formatString in formatters {
+                let formatter = DateFormatter()
+                formatter.dateFormat = formatString
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                
+                if let date = formatter.date(from: startTime) {
+                    let calendar = Calendar.current
+                    let hour = calendar.component(.hour, from: date)
+                    let minute = calendar.component(.minute, from: date)
+                    return String(format: "%02d:%02d", hour, minute)
+                }
+            }
+        }
+        
+        // 降级到小时显示
         return String(format: "%02d:00", hour)
     }
 }
@@ -574,37 +650,37 @@ struct TimelineGroupView: View {
     let isLast: Bool
     
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            // 左侧时间轴
+        HStack(alignment: .top, spacing: 12) {
+            // 左侧时间轴 - 紧凑布局
             VStack(spacing: 0) {
                 // 上方连接线
                 if !isFirst {
                     Rectangle()
                         .fill(Color.blue.opacity(0.4))
-                        .frame(width: 3, height: 24)
+                        .frame(width: 3, height: 20)
                 }
                 
-                // 时间点和时间标签
-                VStack(spacing: 6) {
+                // 时间点和时间标签组合
+                VStack(spacing: 4) {
                     // 时间点
                     ZStack {
                         Circle()
                             .fill(Color.blue)
-                            .frame(width: 16, height: 16)
+                            .frame(width: 14, height: 14)
                         
                         Circle()
                             .fill(Color.white)
-                            .frame(width: 8, height: 8)
+                            .frame(width: 6, height: 6)
                     }
                     
-                    // 时间标签
+                    // 紧凑的时间标签
                     Text(timeGroup.displayTime)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.blue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.blue.opacity(0.15))
-                        .cornerRadius(8)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.blue.opacity(0.12))
+                        .cornerRadius(6)
                 }
                 
                 // 下方连接线
@@ -615,17 +691,17 @@ struct TimelineGroupView: View {
                         .frame(minHeight: calculateMinHeight())
                 }
             }
-            .frame(width: 50)
+            .frame(width: 36)  // 减少宽度从 50 到 36
             
-            // 右侧内容区域
-            VStack(alignment: .leading, spacing: 10) {
+            // 右侧内容区域 - 占用更多空间
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(timeGroup.lifelogs, id: \.id) { lifelog in
                     TimelineLifelogCardView(lifelog: lifelog)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)  // 减少垂直间距
     }
     
     private func calculateMinHeight() -> CGFloat {
