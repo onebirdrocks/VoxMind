@@ -368,16 +368,47 @@ struct LifelogCardView: View {
     }
     
     private func formatTime(_ dateString: String) -> String {
-        let inputFormatter = DateFormatter()
-        inputFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+        return formatTimeToLocal(dateString)
+    }
+    
+    private func formatTimeToLocal(_ dateString: String) -> String {
+        let formatters = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+        ]
         
-        let outputFormatter = DateFormatter()
-        outputFormatter.dateFormat = "HH:mm"
-        
-        if let date = inputFormatter.date(from: dateString) {
-            return outputFormatter.string(from: date)
+        // 解析 UTC 时间
+        for formatString in formatters {
+            let inputFormatter = DateFormatter()
+            inputFormatter.dateFormat = formatString
+            inputFormatter.locale = Locale(identifier: "en_US_POSIX")
+            inputFormatter.timeZone = TimeZone(secondsFromGMT: 0) // UTC
+            
+            if let utcDate = inputFormatter.date(from: dateString) {
+                // 转换为本地时区并格式化为 HH:mm
+                let outputFormatter = DateFormatter()
+                outputFormatter.dateFormat = "HH:mm"
+                outputFormatter.timeZone = TimeZone.current // 本地时区
+                
+                return outputFormatter.string(from: utcDate)
+            }
         }
-        return dateString
+        
+        // 如果解析失败，返回原始字符串的简化版本
+        if dateString.contains("T") {
+            let components = dateString.split(separator: "T")
+            if components.count > 1 {
+                let timeComponent = String(components[1])
+                let timeOnly = timeComponent.split(separator: ":").prefix(2).joined(separator: ":")
+                return timeOnly
+            }
+        }
+        
+        return "00:00"
     }
 }
 
@@ -675,12 +706,14 @@ struct TimelineGroupView: View {
                     
                     // 紧凑的时间标签
                     Text(timeGroup.displayTime)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundColor(.blue)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 4)
                         .padding(.vertical, 2)
                         .background(.blue.opacity(0.12))
-                        .cornerRadius(6)
+                        .cornerRadius(4)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 
                 // 下方连接线
@@ -740,17 +773,19 @@ struct TimelineLifelogCardView: View {
                         .lineLimit(isExpanded ? nil : 3)
                         .fixedSize(horizontal: false, vertical: true)
                     
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         if let startTime = lifelog.startTime {
-                            Text(formatTime(startTime))
-                                .font(.system(size: 11, weight: .medium))
+                            Text(formatTimeToLocal(startTime))
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.blue)
+                                .lineLimit(1)
                         }
                         
                         if let endTime = lifelog.endTime {
-                            Text("- \(formatTime(endTime))")
-                                .font(.system(size: 11, weight: .medium))
+                            Text("- \(formatTimeToLocal(endTime))")
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.blue)
+                                .lineLimit(1)
                         }
                         
                         Spacer()
@@ -803,16 +838,47 @@ struct TimelineLifelogCardView: View {
     }
     
     private func formatTime(_ dateString: String) -> String {
-        let inputFormatter = DateFormatter()
-        inputFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+        return formatTimeToLocal(dateString)
+    }
+    
+    private func formatTimeToLocal(_ dateString: String) -> String {
+        let formatters = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+        ]
         
-        let outputFormatter = DateFormatter()
-        outputFormatter.dateFormat = "HH:mm"
-        
-        if let date = inputFormatter.date(from: dateString) {
-            return outputFormatter.string(from: date)
+        // 解析 UTC 时间
+        for formatString in formatters {
+            let inputFormatter = DateFormatter()
+            inputFormatter.dateFormat = formatString
+            inputFormatter.locale = Locale(identifier: "en_US_POSIX")
+            inputFormatter.timeZone = TimeZone(secondsFromGMT: 0) // UTC
+            
+            if let utcDate = inputFormatter.date(from: dateString) {
+                // 转换为本地时区并格式化为 HH:mm
+                let outputFormatter = DateFormatter()
+                outputFormatter.dateFormat = "HH:mm"
+                outputFormatter.timeZone = TimeZone.current // 本地时区
+                
+                return outputFormatter.string(from: utcDate)
+            }
         }
-        return dateString
+        
+        // 如果解析失败，返回原始字符串的简化版本
+        if dateString.contains("T") {
+            let components = dateString.split(separator: "T")
+            if components.count > 1 {
+                let timeComponent = String(components[1])
+                let timeOnly = timeComponent.split(separator: ":").prefix(2).joined(separator: ":")
+                return timeOnly
+            }
+        }
+        
+        return "00:00"
     }
 }
 
