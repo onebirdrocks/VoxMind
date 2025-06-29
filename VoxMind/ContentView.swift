@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var isSearching = false
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "HasCompletedOnboarding")
     
+    
     // 全屏录音相关状态
     @State private var showFullScreenRecording = false
     @State private var recordingStory: VoiceLog?
@@ -33,14 +34,61 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // 主内容：系统TabView
-            TabView(selection: $selectedTab) {
-                VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
-                    .tabItem {
-                        Image(systemName: "house")
-                        Text("本机")
+            TabView{
+                Tab("本机",systemImage: "house"){
+                    NavigationStack{
+                        VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
                     }
-                    .tag(0)
+                }
+                
+                Tab("挂件",systemImage: "apps.iphone"){
+                        LifeLogListView()
+                }
+                
+                Tab("转录",systemImage: "mic.circle"){
+                    NavigationStack{
+                        RecordView(
+                                            apiManager: apiManager,
+                                            onStartRecording: { story, sourceLanguage, targetLanguage in
+                                                print("🎬 onStartRecording called - setting up full screen recording")
+                                                recordingStory = story
+                                                recordingSourceLanguage = sourceLanguage
+                                                recordingTargetLanguage = targetLanguage
+                                                showFullScreenRecording = true
+                                                print("🎬 showFullScreenRecording set to: \(showFullScreenRecording)")
+                                                print("🎬 recordingStory: \(recordingStory?.title ?? "nil")")
+                                            }
+                                        )
+                    }
+                }
+                
+                Tab(role:.search){
+                    NavigationStack{
+                        VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
+                    }
+                }
+                
+
+                
+            }
+            .searchable(text: $searchText,prompt: "搜索你的语音日志...")
+            .tabBarMinimizeBehavior(.onScrollDown)
+            .tabViewBottomAccessory{
+                VoxMindAskBar()
+            }
+
+            // 主内容：系统TabView
+            //TabView(selection: $selectedTab) {
+            /**
+            TabView() {
+                VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
+                   .tabItem {
+                       Image(systemName: "house")
+                       Text("本机")
+                   }
+                .tag(0)
+                
+                                        
                 LifeLogListView()
                     .tabItem {
                         Image(systemName: "apps.iphone")
@@ -71,7 +119,9 @@ struct ContentView: View {
                         Text("设置")
                     }
                     .tag(3)
-            }
+                
+            }.searchable(text: $searchText)
+             */
 
            
             
@@ -128,5 +178,6 @@ struct ContentView: View {
                     showOnboarding = false
                 }
         }
+        
     }
 }
