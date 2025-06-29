@@ -33,73 +33,79 @@ extension ModelContext {
         print("📊 updateDateLoadStatus: 更新日期 \(dateKey) 状态，hasData: \(hasData)")
         
         // 确保在主线程执行数据库操作
-        Task { @MainActor in
-            do {
-                // 开始事务
-                try transaction {
-                    // 先删除现有记录
-                    let descriptor = FetchDescriptor<DateLoadStatus>(
-                        predicate: #Predicate<DateLoadStatus> { status in
-                            status.dateKey == dateKey
-                        }
-                    )
-                    
-                    let existingStatuses = try fetch(descriptor)
-                    print("📊 找到 \(existingStatuses.count) 个待删除的记录")
-                    for status in existingStatuses {
-                        print("📊 删除记录: \(status.description)")
-                        delete(status)
-                    }
-                    
-                    // 创建新记录
-                    let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
-                    insert(newStatus)
-                    print("📊 插入新记录: \(newStatus.description)")
-                }
-                
-                print("📊 ✅ 日期状态保存成功")
-                
-                // 等待一小段时间确保事务完成
-                try await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
-                
-                // 验证保存结果
-                let verifyDescriptor = FetchDescriptor<DateLoadStatus>(
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async {
+                self.updateDateLoadStatus(dateKey: dateKey, hasData: hasData)
+            }
+            return
+        }
+        
+        do {
+            // 开始事务
+            try transaction {
+                // 先删除现有记录
+                let descriptor = FetchDescriptor<DateLoadStatus>(
                     predicate: #Predicate<DateLoadStatus> { status in
                         status.dateKey == dateKey
                     }
                 )
                 
+                let existingStatuses = try fetch(descriptor)
+                print("📊 找到 \(existingStatuses.count) 个待删除的记录")
+                for status in existingStatuses {
+                    print("📊 删除记录: \(status.description)")
+                    delete(status)
+                }
+                
+                // 创建新记录
+                let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
+                insert(newStatus)
+                print("📊 插入新记录: \(newStatus.description)")
+                
+                // 立即保存上下文
+                try save()
+            }
+            
+            print("📊 ✅ 日期状态保存成功")
+            
+            // 验证保存结果
+            let verifyDescriptor = FetchDescriptor<DateLoadStatus>(
+                predicate: #Predicate<DateLoadStatus> { status in
+                    status.dateKey == dateKey
+                }
+            )
+            
+            if let status = try fetch(verifyDescriptor).first {
+                print("📊 验证 - 找到日期 \(dateKey) 的状态记录: \(status.description)")
+            } else {
+                print("❌ 验证 - 未找到日期 \(dateKey) 的状态记录")
+                print("📊 尝试重新保存...")
+                
+                // 重试保存
+                try transaction {
+                    let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
+                    insert(newStatus)
+                    print("📊 重试插入记录: \(newStatus.description)")
+                    try save()
+                }
+                
+                // 再次验证
                 if let status = try fetch(verifyDescriptor).first {
-                    print("📊 验证 - 找到日期 \(dateKey) 的状态记录: \(status.description)")
+                    print("📊 重试验证 - 找到日期 \(dateKey) 的状态记录: \(status.description)")
                 } else {
-                    print("❌ 验证 - 未找到日期 \(dateKey) 的状态记录")
-                    print("📊 尝试重新保存...")
+                    print("❌ 重试验证 - 仍未找到日期 \(dateKey) 的状态记录")
                     
-                    // 重试保存
-                    try transaction {
-                        let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
-                        insert(newStatus)
-                        print("📊 重试插入记录: \(newStatus.description)")
-                    }
-                    
-                    // 再次验证
-                    if let status = try fetch(verifyDescriptor).first {
-                        print("📊 重试验证 - 找到日期 \(dateKey) 的状态记录: \(status.description)")
-                    } else {
-                        print("❌ 重试验证 - 仍未找到日期 \(dateKey) 的状态记录")
-                        
-                        // 打印数据库状态
-                        let allStatuses = try fetch(FetchDescriptor<DateLoadStatus>())
-                        print("📊 数据库状态:")
-                        print("  - 总记录数: \(allStatuses.count)")
-                        for status in allStatuses {
-                            print("  - \(status.description)")
-                        }
+                    // 打印数据库状态
+                    let allStatuses = try fetch(FetchDescriptor<DateLoadStatus>())
+                    print("📊 数据库状态:")
+                    print("  - 总记录数: \(allStatuses.count)")
+                    for status in allStatuses {
+                        print("  - \(status.description)")
                     }
                 }
-            } catch {
-                logError(error, operation: "更新日期状态")
             }
+        } catch {
+            logError(error, operation: "更新日期状态")
         }
     }
     
@@ -1632,10 +1638,10 @@ struct BatchSyncView: View {
                         modelContext.insert(cachedLifelog)
                     }
                 }
+                
+                // 立即保存上下文
+                try modelContext.save()
             }
-            
-            // 等待一小段时间确保事务完成
-            try await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
             
             // 验证保存结果
             let verifyDescriptor = FetchDescriptor<CachedLifelog>(
