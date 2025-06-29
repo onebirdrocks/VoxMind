@@ -64,7 +64,7 @@ struct ContentView: View {
                 
                 Tab(role:.search){
                     NavigationStack{
-                        VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
+                        SearchView(apiManager: apiManager, searchText: $searchText)
                     }
                 }
                 
