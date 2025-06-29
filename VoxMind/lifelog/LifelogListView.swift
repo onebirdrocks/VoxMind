@@ -307,18 +307,7 @@ struct LifeLogListView: View {
             VStack(spacing: 0) {
                 // 顶部栏
                 HStack {
-                    Spacer()
-                    
-                    // 中间的日期显示
-                    Button(action: { showDatePicker = true }) {
-                        Text(dateDisplayString(selectedDate))
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                    }
-                    
-                    Spacer()
-                    
-                    // 右侧按钮组
+
                     HStack(spacing: 16) {
                         // 批量同步按钮（项链吊坠图标或同步图标）
                         Button(action: { showBatchSync = true }) {
@@ -340,6 +329,21 @@ struct LifeLogListView: View {
                             }
                         }
                         .disabled(isBatchSyncing)
+                        
+                    }
+                    Spacer() 
+                    
+                    // 中间的日期显示
+                    Button(action: { showDatePicker = true }) {
+                        Text(dateDisplayString(selectedDate))
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Spacer()
+                    
+                    // 右侧按钮组
+                    HStack(spacing: 16) {
                         
                         // 日历按钮
                         Button(action: { showDatePicker = true }) {
