@@ -14,6 +14,10 @@ struct VoxMindLabApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [VoiceLog.self, CachedLifelog.self, DateLoadStatus.self])
+        .modelContainer(for: [
+            VoiceLog.self,
+            CachedLifelog.self,
+            DateLoadStatus.self
+        ])
     }
 }

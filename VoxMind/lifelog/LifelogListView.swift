@@ -1,6 +1,174 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - 日期状态管理扩展
+extension ModelContext {
+    /// 打印详细的错误信息
+    private func logError(_ error: Error, operation: String) {
+        print("❌ SwiftData错误 [\(operation)]:")
+        print("  - 错误类型: \(type(of: error))")
+        print("  - 错误描述: \(error.localizedDescription)")
+        
+        if let nsError = error as? NSError {
+            print("  - 错误域: \(nsError.domain)")
+            print("  - 错误代码: \(nsError.code)")
+            if let details = nsError.userInfo["NSDetailedErrors"] as? [Error] {
+                print("  - 详细错误:")
+                details.forEach { detail in
+                    print("    • \(detail)")
+                }
+            }
+            if let reason = nsError.userInfo["NSUnderlyingError"] as? Error {
+                print("  - 底层错误: \(reason)")
+            }
+            print("  - 完整信息: \(nsError)")
+        }
+    }
+
+    /// 更新指定日期的加载状态
+    /// - Parameters:
+    ///   - dateKey: 日期键值（格式：YYYY-MM-DD）
+    ///   - hasData: 是否有数据
+    func updateDateLoadStatus(dateKey: String, hasData: Bool) {
+        print("📊 updateDateLoadStatus: 更新日期 \(dateKey) 状态，hasData: \(hasData)")
+        
+        // 确保在主线程执行数据库操作
+        Task { @MainActor in
+            do {
+                // 开始事务
+                try transaction {
+                    // 先删除现有记录
+                    let descriptor = FetchDescriptor<DateLoadStatus>(
+                        predicate: #Predicate<DateLoadStatus> { status in
+                            status.dateKey == dateKey
+                        }
+                    )
+                    
+                    let existingStatuses = try fetch(descriptor)
+                    print("📊 找到 \(existingStatuses.count) 个待删除的记录")
+                    for status in existingStatuses {
+                        print("📊 删除记录: \(status.description)")
+                        delete(status)
+                    }
+                    
+                    // 创建新记录
+                    let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
+                    insert(newStatus)
+                    print("📊 插入新记录: \(newStatus.description)")
+                }
+                
+                print("📊 ✅ 日期状态保存成功")
+                
+                // 等待一小段时间确保事务完成
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
+                
+                // 验证保存结果
+                let verifyDescriptor = FetchDescriptor<DateLoadStatus>(
+                    predicate: #Predicate<DateLoadStatus> { status in
+                        status.dateKey == dateKey
+                    }
+                )
+                
+                if let status = try fetch(verifyDescriptor).first {
+                    print("📊 验证 - 找到日期 \(dateKey) 的状态记录: \(status.description)")
+                } else {
+                    print("❌ 验证 - 未找到日期 \(dateKey) 的状态记录")
+                    print("📊 尝试重新保存...")
+                    
+                    // 重试保存
+                    try transaction {
+                        let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
+                        insert(newStatus)
+                        print("📊 重试插入记录: \(newStatus.description)")
+                    }
+                    
+                    // 再次验证
+                    if let status = try fetch(verifyDescriptor).first {
+                        print("📊 重试验证 - 找到日期 \(dateKey) 的状态记录: \(status.description)")
+                    } else {
+                        print("❌ 重试验证 - 仍未找到日期 \(dateKey) 的状态记录")
+                        
+                        // 打印数据库状态
+                        let allStatuses = try fetch(FetchDescriptor<DateLoadStatus>())
+                        print("📊 数据库状态:")
+                        print("  - 总记录数: \(allStatuses.count)")
+                        for status in allStatuses {
+                            print("  - \(status.description)")
+                        }
+                    }
+                }
+            } catch {
+                logError(error, operation: "更新日期状态")
+            }
+        }
+    }
+    
+    /// 加载所有日期状态
+    /// - Returns: 包含有数据的日期集合和已加载的日期集合的元组
+    func loadDateStatuses() -> (datesWithData: Set<String>, datesLoaded: Set<String>) {
+        // 确保在主线程执行数据库查询
+        guard Thread.isMainThread else {
+            return DispatchQueue.main.sync {
+                self.loadDateStatuses()
+            }
+        }
+        
+        do {
+            let descriptor = FetchDescriptor<DateLoadStatus>()
+            let statuses = try fetch(descriptor)
+            print("📅 loadDateStatuses: 找到 \(statuses.count) 个日期状态记录")
+            
+            // 打印所有找到的记录
+            for status in statuses {
+                print("📅 状态记录: \(status.description)")
+            }
+            
+            let datesWithData = Set(statuses.filter { $0.hasData }.map { $0.dateKey })
+            let datesLoaded = Set(statuses.map { $0.dateKey })
+            
+            print("📅 有数据的日期: \(datesWithData.sorted())")
+            print("📅 已加载的日期: \(datesLoaded.sorted())")
+            
+            return (datesWithData, datesLoaded)
+        } catch {
+            logError(error, operation: "加载日期状态")
+            return (Set(), Set())
+        }
+    }
+}
+
+// MARK: - 日期加载状态模型
+@Model
+final class DateLoadStatus {
+    // 使用复合主键
+    @Attribute(.unique) var id: String // dateKey_timestamp
+    var dateKey: String // YYYY-MM-DD
+    var hasData: Bool
+    var lastLoadedAt: Date
+    
+    init(dateKey: String, hasData: Bool) {
+        self.dateKey = dateKey
+        self.hasData = hasData
+        self.lastLoadedAt = Date()
+        // 创建一个唯一的ID，包含日期和时间戳
+        self.id = "\(dateKey)_\(Int(Date().timeIntervalSince1970))"
+    }
+    
+    // 用于调试的描述
+    var description: String {
+        return "DateLoadStatus(id: \(id), dateKey: \(dateKey), hasData: \(hasData), lastLoadedAt: \(lastLoadedAt))"
+    }
+}
+
+// MARK: - 日期格式化工具
+extension Date {
+    func toDateKey() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: self)
+    }
+}
+
 //挂件列表视图
 struct LifeLogListView: View {
     @Environment(\.modelContext) private var modelContext
@@ -9,8 +177,31 @@ struct LifeLogListView: View {
     @State private var errorMessage: String? = nil
     @State private var showDatePicker = false
     @State private var selectedDate = Date()
+    
+    // 批量同步相关状态
+    @State private var showBatchSync = false
+    @State private var isBatchSyncing = false
+    @State private var syncProgress: Double = 0.0
+    @State private var syncStatusText = ""
+    
+    // 日历状态相关
     @State private var datesWithData: Set<String> = []
     @State private var datesLoaded: Set<String> = []
+    
+    private func dateKeyFromDate(_ date: Date) -> String {
+        date.toDateKey()
+    }
+    
+    private func loadDateStatuses() {
+        Task { @MainActor in
+            let (withData, loaded) = modelContext.loadDateStatuses()
+            print("📅 更新日历状态 - 有数据的日期: \(withData.count)个, 已加载的日期: \(loaded.count)个")
+            print("📅 有数据的日期: \(withData.sorted())")
+            print("📅 已加载的日期: \(loaded.sorted())")
+            datesWithData = withData
+            datesLoaded = loaded
+        }
+    }
     
     // 按时间分组的生活日志
     private var groupedLifelogs: [TimeGroup] {
@@ -123,6 +314,27 @@ struct LifeLogListView: View {
                     
                     // 右侧按钮组
                     HStack(spacing: 16) {
+                        // 批量同步按钮（项链吊坠图标或同步图标）
+                        Button(action: { showBatchSync = true }) {
+                            ZStack {
+                                // 基础图标
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(isBatchSyncing ? .orange : .blue)
+                                
+                                // 进度圆环
+                                if isBatchSyncing {
+                                    Circle()
+                                        .trim(from: 0, to: syncProgress)
+                                        .stroke(Color.orange, lineWidth: 2)
+                                        .frame(width: 24, height: 24)
+                                        .rotationEffect(.degrees(-90))
+                                        .animation(.easeInOut(duration: 0.2), value: syncProgress)
+                                }
+                            }
+                        }
+                        .disabled(isBatchSyncing)
+                        
                         // 日历按钮
                         Button(action: { showDatePicker = true }) {
                             Image(systemName: "calendar")
@@ -131,11 +343,7 @@ struct LifeLogListView: View {
                         }
                         
                         // 刷新按钮
-                        Button(action: {
-                            Task {
-                                await forceRefreshDay()
-                            }
-                        }) {
+                        Button(action: refreshLifelogs) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 18))
                                 .foregroundColor(.blue)
@@ -202,7 +410,9 @@ struct LifeLogListView: View {
                 }
             }
             .background(.gray.opacity(0.1))
+            #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
         }
         .sheet(isPresented: $showDatePicker) {
             NavigationView {
@@ -221,7 +431,7 @@ struct LifeLogListView: View {
                                 Circle()
                                     .fill(.gray)
                                     .frame(width: 8, height: 8)
-                                Text("无数据")
+                                Text("已加载，无数据")
                                     .font(.caption)
                             }
                         }
@@ -233,17 +443,21 @@ struct LifeLogListView: View {
                     CalendarDatePicker(
                         selectedDate: $selectedDate,
                         datesWithData: datesWithData,
-                        datesLoaded: datesLoaded
-                    ) { newDate in
-                        selectedDate = newDate
-                        showDatePicker = false
-                        refreshLifelogs()
-                    }
+                        datesLoaded: datesLoaded,
+                        onDateSelected: { date in
+                            selectedDate = date
+                            showDatePicker = false
+                            Task {
+                                await refreshLifelogs()
+                            }
+                        }
+                    )
                     .padding()
                     
                     Spacer()
                 }
                 .navigationTitle("选择日期")
+                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -252,12 +466,41 @@ struct LifeLogListView: View {
                         }
                     }
                 }
+                #else
+                .toolbar {
+                    ToolbarItem(placement: .automatic) {
+                        Button("取消") {
+                            showDatePicker = false
+                        }
+                    }
+                }
+                #endif
             }
             .presentationDetents([.medium, .large])
         }
-        .onAppear {
+        .sheet(isPresented: $showBatchSync) {
+            BatchSyncView(
+                isPresented: $showBatchSync,
+                isSyncing: $isBatchSyncing,
+                syncProgress: $syncProgress,
+                syncStatusText: $syncStatusText,
+                modelContext: modelContext,
+                onSyncComplete: {
+                    // 同步完成后刷新当前显示的数据和日历状态
+                    loadDateStatuses()
+                    refreshLifelogs()
+                }
+            )
+        }
+        .task {
+            // 初始加载
             loadDateStatuses()
-            refreshLifelogs()
+            await refreshLifelogs()
+        }
+        .onChange(of: selectedDate) { _ in
+            Task {
+                await refreshLifelogs()
+            }
         }
     }
     
@@ -314,15 +557,16 @@ struct LifeLogListView: View {
                     lifelogs = cachedLifelogs
                 } else {
                     // 缓存中没有数据，从远程获取
+                    print("📅 加载日期 \(dateKey) 的数据")
                     let fetchedLifelogs = try await fetchLifelogs(for: selectedDate)
-                    lifelogs = fetchedLifelogs
+                    await MainActor.run {
+                        self.lifelogs = fetchedLifelogs
+                        modelContext.updateDateLoadStatus(dateKey: dateKey, hasData: !fetchedLifelogs.isEmpty)
+                    }
                     
                     // 保存到本地缓存
                     await saveFetchedLifelogs(fetchedLifelogs, dateKey: dateKey)
                 }
-                
-                // 更新该日期的加载状态
-                updateDateLoadStatus(dateKey: dateKey, hasData: !lifelogs.isEmpty)
             }
             
         } catch {
@@ -341,20 +585,6 @@ struct LifeLogListView: View {
     }
     
     // MARK: - 缓存管理方法
-    
-    private func dateKeyFromDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-    
-    private func loadDateStatuses() {
-        let fetchDescriptor = FetchDescriptor<DateLoadStatus>()
-        if let statuses = try? modelContext.fetch(fetchDescriptor) {
-            datesWithData = Set(statuses.filter(\.hasData).map(\.dateKey))
-            datesLoaded = Set(statuses.map(\.dateKey))
-        }
-    }
     
     private func loadCachedLifelogs(for dateKey: String) -> [Lifelog] {
         let fetchDescriptor = FetchDescriptor<CachedLifelog>(
@@ -383,93 +613,63 @@ struct LifeLogListView: View {
     
     @MainActor
     private func saveFetchedLifelogs(_ lifelogs: [Lifelog], dateKey: String) async {
-        for lifelog in lifelogs {
-            // 检查是否已存在
-            let lifelogId = lifelog.id
-            let fetchDescriptor = FetchDescriptor<CachedLifelog>(
-                predicate: #Predicate<CachedLifelog> { cached in
-                    cached.id == lifelogId
+        print("💾 saveFetchedLifelogs: 开始保存 \(lifelogs.count) 个lifelog到日期 \(dateKey)")
+        
+        var savedCount = 0
+        var updatedCount = 0
+        
+        do {
+            // 使用事务包装所有操作
+            try modelContext.transaction {
+                for lifelog in lifelogs {
+                    // 检查是否已存在
+                    let lifelogId = lifelog.id
+                    let fetchDescriptor = FetchDescriptor<CachedLifelog>(
+                        predicate: #Predicate<CachedLifelog> { cached in
+                            cached.id == lifelogId
+                        }
+                    )
+                    
+                    if let existingCached = try modelContext.fetch(fetchDescriptor).first {
+                        // 更新现有记录
+                        existingCached.title = lifelog.title
+                        existingCached.markdown = lifelog.markdown
+                        existingCached.startTime = lifelog.startTime
+                        existingCached.endTime = lifelog.endTime
+                        existingCached.isStarred = lifelog.isStarred ?? false
+                        existingCached.updatedAt = lifelog.updatedAt
+                        existingCached.lastFetchedAt = Date()
+                        
+                        if let contents = lifelog.contents {
+                            existingCached.contentNodes = try? JSONEncoder().encode(contents)
+                        }
+                        updatedCount += 1
+                        print("💾 更新了存在的lifelog: \(lifelog.id)")
+                    } else {
+                        // 创建新记录
+                        let cachedLifelog = CachedLifelog(from: lifelog, dateKey: dateKey)
+                        modelContext.insert(cachedLifelog)
+                        savedCount += 1
+                        print("💾 插入了新的lifelog: \(lifelog.id)")
+                    }
                 }
-            )
+            }
             
-            if let existingCached = try? modelContext.fetch(fetchDescriptor).first {
-                // 更新现有记录
-                existingCached.title = lifelog.title
-                existingCached.markdown = lifelog.markdown
-                existingCached.startTime = lifelog.startTime
-                existingCached.endTime = lifelog.endTime
-                existingCached.isStarred = lifelog.isStarred ?? false
-                existingCached.updatedAt = lifelog.updatedAt
-                existingCached.lastFetchedAt = Date()
-                
-                if let contents = lifelog.contents {
-                    existingCached.contentNodes = try? JSONEncoder().encode(contents)
-                }
-            } else {
-                // 创建新记录
-                let cachedLifelog = CachedLifelog(from: lifelog, dateKey: dateKey)
-                modelContext.insert(cachedLifelog)
-            }
+            print("💾 ✅ 成功保存上下文: 新增\(savedCount)个，更新\(updatedCount)个")
+            
+            // 等待一小段时间确保事务完成
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
+            
+            // 更新日期状态
+            modelContext.updateDateLoadStatus(dateKey: dateKey, hasData: !lifelogs.isEmpty)
+            
+            // 等待状态更新完成后再刷新状态
+            try? await Task.sleep(nanoseconds: 200_000_000) // 0.2秒
+            loadDateStatuses()
+            
+        } catch {
+            print("❌ 保存上下文失败: \(error)")
         }
-        
-        // 保存上下文
-        try? modelContext.save()
-        
-        // 更新日期状态
-        updateDateLoadStatus(dateKey: dateKey, hasData: !lifelogs.isEmpty)
-    }
-    
-    private func updateDateLoadStatus(dateKey: String, hasData: Bool) {
-        let fetchDescriptor = FetchDescriptor<DateLoadStatus>(
-            predicate: #Predicate<DateLoadStatus> { status in
-                status.dateKey == dateKey
-            }
-        )
-        
-        if let existingStatus = try? modelContext.fetch(fetchDescriptor).first {
-            existingStatus.hasData = hasData
-            existingStatus.lastLoadedAt = Date()
-        } else {
-            let newStatus = DateLoadStatus(dateKey: dateKey, hasData: hasData)
-            modelContext.insert(newStatus)
-        }
-        
-        try? modelContext.save()
-    }
-    
-    // 刷新功能：删除当天所有本地数据，重新获取
-    @MainActor
-    private func forceRefreshDay() async {
-        let dateKey = dateKeyFromDate(selectedDate)
-        
-        // 删除该日期的所有本地数据
-        let fetchDescriptor = FetchDescriptor<CachedLifelog>(
-            predicate: #Predicate<CachedLifelog> { cached in
-                cached.dateKey == dateKey
-            }
-        )
-        
-        if let cachedLifelogs = try? modelContext.fetch(fetchDescriptor) {
-            for cached in cachedLifelogs {
-                modelContext.delete(cached)
-            }
-        }
-        
-        // 删除该日期的加载状态
-        let statusFetchDescriptor = FetchDescriptor<DateLoadStatus>(
-            predicate: #Predicate<DateLoadStatus> { status in
-                status.dateKey == dateKey
-            }
-        )
-        
-        if let status = try? modelContext.fetch(statusFetchDescriptor).first {
-            modelContext.delete(status)
-        }
-        
-        try? modelContext.save()
-        
-        // 重新获取数据
-        await refreshLifelogsAsync()
     }
     
     private func fetchLifelogs(for date: Date) async throws -> [Lifelog] {
@@ -844,19 +1044,6 @@ class CachedLifelog {
     }
 }
 
-@Model
-class DateLoadStatus {
-    @Attribute(.unique) var dateKey: String // YYYY-MM-DD
-    var hasData: Bool
-    var lastLoadedAt: Date
-    
-    init(dateKey: String, hasData: Bool) {
-        self.dateKey = dateKey
-        self.hasData = hasData
-        self.lastLoadedAt = Date()
-    }
-}
-
 // MARK: - API 响应数据模型
 struct Lifelog: Identifiable, Decodable {
     let id: String
@@ -869,7 +1056,7 @@ struct Lifelog: Identifiable, Decodable {
     let updatedAt: String?
 }
 
-struct ContentNode: Hashable, Codable {
+struct ContentNode: Codable, Hashable {
     let type: String
     let content: String
     let startTime: String?
@@ -1159,6 +1346,328 @@ struct TimelineLifelogCardView: View {
     }
 }
 
+// MARK: - 批量同步视图
+struct BatchSyncView: View {
+    @Binding var isPresented: Bool
+    @Binding var isSyncing: Bool
+    @Binding var syncProgress: Double
+    @Binding var syncStatusText: String
+    let modelContext: ModelContext
+    let onSyncComplete: () -> Void
+    
+    @State private var selectedTimeRange: TimeRange = .lastWeek
+    @State private var customStartDate = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+    @State private var customEndDate = Date()
+    
+    private func dateKeyFromDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+    
+    enum TimeRange: String, CaseIterable {
+        case lastWeek = "最近一周"
+        case lastMonth = "最近一个月"
+        case lastThreeMonths = "最近三个月"
+        case custom = "自定义时间范围"
+        
+        func getDateRange() -> (Date, Date) {
+            let calendar = Calendar.current
+            let endDate = Date()
+            
+            switch self {
+            case .lastWeek:
+                let startDate = calendar.date(byAdding: .day, value: -7, to: endDate) ?? endDate
+                return (startDate, endDate)
+            case .lastMonth:
+                let startDate = calendar.date(byAdding: .month, value: -1, to: endDate) ?? endDate
+                return (startDate, endDate)
+            case .lastThreeMonths:
+                let startDate = calendar.date(byAdding: .month, value: -3, to: endDate) ?? endDate
+                return (startDate, endDate)
+            case .custom:
+                return (endDate, endDate) // 将在视图中使用自定义日期
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // 标题和描述
+                VStack(spacing: 8) {
+                    Text("批量同步数据")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("选择时间范围，批量同步 Limitless AI 的生活日志数据")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top)
+                
+                // 时间范围选择
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("选择时间范围")
+                        .font(.headline)
+                    
+                    ForEach(TimeRange.allCases, id: \.self) { range in
+                        HStack {
+                            Button(action: {
+                                selectedTimeRange = range
+                            }) {
+                                HStack {
+                                    Image(systemName: selectedTimeRange == range ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(selectedTimeRange == range ? .blue : .gray)
+                                    
+                                    Text(range.rawValue)
+                                        .foregroundColor(.primary)
+                                    
+                                    Spacer()
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    
+                    // 自定义时间范围选择器
+                    if selectedTimeRange == .custom {
+                        VStack(spacing: 12) {
+                            DatePicker("开始日期", selection: $customStartDate, displayedComponents: .date)
+                            DatePicker("结束日期", selection: $customEndDate, displayedComponents: .date)
+                        }
+                        .padding(.leading, 32)
+                    }
+                }
+                .padding(.horizontal)
+                
+                // 同步进度
+                if isSyncing {
+                    VStack(spacing: 12) {
+                        ProgressView(value: syncProgress)
+                            .progressViewStyle(LinearProgressViewStyle())
+                        
+                        Text(syncStatusText)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("\(Int(syncProgress * 100))%")
+                            .font(.headline)
+                            .foregroundColor(.blue)
+                    }
+                    .padding(.horizontal)
+                }
+                
+                Spacer()
+                
+                // 操作按钮
+                HStack(spacing: 16) {
+                    Button("取消") {
+                        isPresented = false
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isSyncing)
+                    
+                    Button("开始同步") {
+                        startBatchSync()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSyncing)
+                }
+                .padding(.horizontal)
+                .padding(.bottom)
+            }
+            .navigationTitle("批量同步")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+        }
+    }
+    
+    private func startBatchSync() {
+        Task {
+            await performBatchSync()
+        }
+    }
+    
+    @MainActor
+    private func performBatchSync() async {
+        isSyncing = true
+        syncProgress = 0.0
+        syncStatusText = "准备同步..."
+        
+        // 获取时间范围
+        let (startDate, endDate) = selectedTimeRange == .custom 
+            ? (customStartDate, customEndDate) 
+            : selectedTimeRange.getDateRange()
+        
+        // 生成日期列表
+        var dates: [Date] = []
+        var currentDate = startDate
+        while currentDate <= endDate {
+            dates.append(currentDate)
+            currentDate = Calendar.current.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
+        }
+        
+        let totalDays = dates.count
+        var completedDays = 0
+        
+        syncStatusText = "正在同步 \(totalDays) 天的数据..."
+        
+        // 逐日同步数据
+        for date in dates {
+            do {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                let dateString = dateFormatter.string(from: date)
+                
+                syncStatusText = "正在同步 \(dateString)..."
+                
+                // 调用 API 获取数据
+                let lifelogs = try await fetchLifelogs(for: date)
+                
+                // 保存到 SwiftData
+                await upsertLifelogs(lifelogs, for: date)
+                
+                completedDays += 1
+                syncProgress = Double(completedDays) / Double(totalDays)
+                
+            } catch {
+                print("同步日期 \(date) 失败: \(error)")
+                // 继续同步其他日期
+                completedDays += 1
+                syncProgress = Double(completedDays) / Double(totalDays)
+            }
+        }
+        
+        syncStatusText = "同步完成！"
+        
+        // 延迟一下让用户看到完成状态
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        
+        isSyncing = false
+        onSyncComplete()
+        isPresented = false
+    }
+    
+    private func fetchLifelogs(for date: Date) async throws -> [Lifelog] {
+        let apiKey = UserDefaults.standard.string(forKey: "LimitlessAIAPIKey") ?? ""
+        guard !apiKey.isEmpty else {
+            throw LifelogError.noAPIKey
+        }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let dateString = formatter.string(from: date)
+        
+        let urlString = "https://api.limitless.ai/v1/lifelogs?date=\(dateString)&includeMarkdown=true&includeHeadings=true&limit=50"
+        
+        guard let url = URL(string: urlString) else {
+            throw LifelogError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LifelogError.invalidResponse
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            throw LifelogError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+            decoder.dateDecodingStrategy = .formatted(dateFormatter)
+            
+            let response = try decoder.decode(LifelogsResponse.self, from: data)
+            return response.data?.lifelogs ?? []
+        } catch {
+            throw LifelogError.decodingError(error.localizedDescription)
+        }
+    }
+    
+    @MainActor
+    private func upsertLifelogs(_ lifelogs: [Lifelog], for date: Date) async {
+        let dateKey = dateKeyFromDate(date)
+        print("💾 开始保存 \(lifelogs.count) 个 lifelog 到日期 \(dateKey)")
+        
+        do {
+            try modelContext.transaction {
+                for lifelog in lifelogs {
+                    // 检查是否已存在
+                    let lifelogId = lifelog.id
+                    let fetchDescriptor = FetchDescriptor<CachedLifelog>(
+                        predicate: #Predicate<CachedLifelog> { cached in
+                            cached.id == lifelogId
+                        }
+                    )
+                    
+                    if let existingCached = try? modelContext.fetch(fetchDescriptor).first {
+                        // 更新现有记录（Upsert 操作）
+                        print("💾 更新现有记录: \(lifelogId)")
+                        existingCached.title = lifelog.title
+                        existingCached.markdown = lifelog.markdown
+                        existingCached.startTime = lifelog.startTime
+                        existingCached.endTime = lifelog.endTime
+                        existingCached.isStarred = lifelog.isStarred ?? false
+                        existingCached.updatedAt = lifelog.updatedAt
+                        existingCached.lastFetchedAt = Date()
+                        
+                        if let contents = lifelog.contents {
+                            existingCached.contentNodes = try? JSONEncoder().encode(contents)
+                        }
+                    } else {
+                        // 创建新记录
+                        print("💾 创建新记录: \(lifelogId)")
+                        let cachedLifelog = CachedLifelog(from: lifelog, dateKey: dateKey)
+                        modelContext.insert(cachedLifelog)
+                    }
+                }
+            }
+            
+            // 等待一小段时间确保事务完成
+            try await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
+            
+            // 验证保存结果
+            let verifyDescriptor = FetchDescriptor<CachedLifelog>(
+                predicate: #Predicate<CachedLifelog> { cached in
+                    cached.dateKey == dateKey
+                }
+            )
+            let savedLifelogs = try modelContext.fetch(verifyDescriptor)
+            print("💾 验证结果: 找到 \(savedLifelogs.count) 个记录")
+            
+            // 更新日期状态
+            modelContext.updateDateLoadStatus(dateKey: dateKey, hasData: !lifelogs.isEmpty)
+            
+        } catch {
+            print("❌ 保存失败:")
+            print("  - 错误类型: \(type(of: error))")
+            print("  - 错误描述: \(error.localizedDescription)")
+            
+            if let nsError = error as? NSError {
+                print("  - 错误域: \(nsError.domain)")
+                print("  - 错误代码: \(nsError.code)")
+                if let details = nsError.userInfo["NSDetailedErrors"] as? [Error] {
+                    print("  - 详细错误:")
+                    details.forEach { detail in
+                        print("    • \(detail)")
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 自定义日历选择器
 struct CalendarDatePicker: View {
     @Binding var selectedDate: Date
@@ -1174,6 +1683,7 @@ struct CalendarDatePicker: View {
             HStack {
                 Button(action: {
                     displayedMonth = Calendar.current.date(byAdding: .month, value: -1, to: displayedMonth) ?? displayedMonth
+                    print("📅 切换到上个月: \(monthYearString(displayedMonth))")
                 }) {
                     Image(systemName: "chevron.left")
                         .font(.title2)
@@ -1190,6 +1700,7 @@ struct CalendarDatePicker: View {
                 
                 Button(action: {
                     displayedMonth = Calendar.current.date(byAdding: .month, value: 1, to: displayedMonth) ?? displayedMonth
+                    print("📅 切换到下个月: \(monthYearString(displayedMonth))")
                 }) {
                     Image(systemName: "chevron.right")
                         .font(.title2)
@@ -1212,24 +1723,29 @@ struct CalendarDatePicker: View {
             
             // 日期网格
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
-                ForEach(daysInMonth(), id: \.self) { date in
-                    if let date = date {
-                        DayCell(
+                ForEach(daysInMonth(), id: \.id) { dayInfo in
+                    if let date = dayInfo.date {
+                        CalendarDayCell(
                             date: date,
                             isSelected: Calendar.current.isDate(date, inSameDayAs: selectedDate),
                             isToday: Calendar.current.isDateInToday(date),
-                            hasData: datesWithData.contains(dateKeyFromDate(date)),
-                            wasLoaded: datesLoaded.contains(dateKeyFromDate(date))
+                            hasData: datesWithData.contains(date.toDateKey()),
+                            wasLoaded: datesLoaded.contains(date.toDateKey())
                         ) {
                             onDateSelected(date)
                         }
                     } else {
                         Text("")
                             .frame(height: 40)
+                            .id(dayInfo.id) // 为空白单元格添加唯一ID
                     }
                 }
             }
             .padding(.horizontal)
+        }
+        .onChange(of: displayedMonth) { _ in
+            print("📅 月份变更 - 当前有数据的日期: \(datesWithData.sorted())")
+            print("📅 月份变更 - 当前已加载的日期: \(datesLoaded.sorted())")
         }
     }
     
@@ -1239,13 +1755,21 @@ struct CalendarDatePicker: View {
         return formatter.string(from: date)
     }
     
-    private func dateKeyFromDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+    private struct DayInfo: Identifiable {
+        let id: String // 使用字符串作为ID，确保唯一性
+        let date: Date?
+        
+        init(date: Date?, offset: Int) {
+            self.date = date
+            if let date = date {
+                self.id = "day_\(date.toDateKey())"
+            } else {
+                self.id = "empty_\(offset)" // 为空白日期生成唯一ID
+            }
+        }
     }
     
-    private func daysInMonth() -> [Date?] {
+    private func daysInMonth() -> [DayInfo] {
         let calendar = Calendar.current
         let startOfMonth = calendar.dateInterval(of: .month, for: displayedMonth)?.start ?? displayedMonth
         let range = calendar.range(of: .day, in: .month, for: displayedMonth)?.count ?? 30
@@ -1253,11 +1777,15 @@ struct CalendarDatePicker: View {
         let firstWeekday = calendar.component(.weekday, from: startOfMonth)
         let offsetDays = (firstWeekday + 5) % 7 // 调整为周一开始
         
-        var days: [Date?] = Array(repeating: nil, count: offsetDays)
+        // 创建空白日期
+        var days: [DayInfo] = (0..<offsetDays).map { offset in
+            DayInfo(date: nil, offset: offset)
+        }
         
+        // 添加月份中的日期
         for day in 1...range {
             if let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
-                days.append(date)
+                days.append(DayInfo(date: date, offset: offsetDays + day))
             }
         }
         
@@ -1265,7 +1793,7 @@ struct CalendarDatePicker: View {
     }
 }
 
-struct DayCell: View {
+struct CalendarDayCell: View {
     let date: Date
     let isSelected: Bool
     let isToday: Bool
@@ -1290,19 +1818,19 @@ struct DayCell: View {
                 if hasData || wasLoaded {
                     VStack {
                         Spacer()
-                        HStack {
-                            Spacer()
-                            Circle()
-                                .fill(hasData ? .green : .gray)
-                                .frame(width: 6, height: 6)
-                                .offset(x: 2, y: -2)
-                        }
+                        Circle()
+                            .fill(hasData ? .green : .gray)
+                            .frame(width: 6, height: 6)
+                            .padding(.bottom, 2)
                     }
                     .frame(width: 36, height: 36)
                 }
             }
         }
         .frame(height: 40)
+        .onChange(of: hasData) { newHasData in
+            print("📅 日期单元格状态更新 - 日期: \(date.toDateKey()), hasData: \(newHasData), wasLoaded: \(wasLoaded)")
+        }
     }
     
     private var backgroundColor: Color {
