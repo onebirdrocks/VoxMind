@@ -418,7 +418,7 @@ struct LifeLogListView: View {
                     }
                 }
             }
-            .background(.gray.opacity(0.1))
+            .background(.regularMaterial)
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
             #endif
@@ -969,7 +969,7 @@ struct ContentNodeView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(node.content)
                         .font(.system(size: 14, weight: .regular))
-                        .foregroundColor(.black.opacity(0.8))
+                        .foregroundColor(.primary)
                         .italic()
                         .fixedSize(horizontal: false, vertical: true)
                     
@@ -981,20 +981,20 @@ struct ContentNodeView: View {
                 }
             }
             .padding(.all, 10)
-            .background(.orange.opacity(0.05))
+            .background(.orange.opacity(0.1))
             .cornerRadius(8)
             
         case "paragraph":
             Text(node.content)
                 .font(.system(size: 14, weight: .regular))
-                .foregroundColor(.black.opacity(0.85))
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(2)
             
         default:
             Text(node.content)
                 .font(.system(size: 14, weight: .regular))
-                .foregroundColor(.black.opacity(0.85))
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1172,7 +1172,7 @@ struct TimelineGroupView: View {
                             .frame(width: 14, height: 14)
                         
                         Circle()
-                            .fill(Color.white)
+                            .fill(.background)
                             .frame(width: 6, height: 6)
                     }
                     
@@ -1289,7 +1289,6 @@ struct TimelineLifelogCardView: View {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     Divider()
-                        .background(.gray.opacity(0.3))
                     
                     ForEach(filteredContents, id: \.hashValue) { content in
                         ContentNodeView(node: content, level: 0)
@@ -1300,7 +1299,7 @@ struct TimelineLifelogCardView: View {
             }
         }
         .padding(14)
-        .background(Color.white)
+        .background(.regularMaterial)
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 2)
         .overlay(

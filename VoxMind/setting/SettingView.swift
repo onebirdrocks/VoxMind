@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Combine
 
 struct CustomSecureField: ViewModifier {
     func body(content: Content) -> some View {
@@ -109,6 +110,7 @@ struct SettingsView: View {
     @State private var limitlessAPIKey: String = UserDefaults.standard.string(forKey: "LimitlessAIAPIKey") ?? ""
     @State private var limitlessSaveStatus: String = ""
     @State private var showOnboarding = false
+    @State private var isThemeTransitioning = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -122,20 +124,60 @@ struct SettingsView: View {
                 LazyVStack(spacing: 0) {
                     Group {
                         Section("主题设置") {
-                            Picker("主题模式", selection: $themeManager.currentTheme) {
-                                ForEach(ThemeManager.AppTheme.allCases, id: \.self) { theme in
-                                    Image(systemName: iconForTheme(theme))
-                                        .tag(theme)
+                            VStack(spacing: 12) {
+                                // 主题预览指示器
+                                HStack {
+                                    ForEach(ThemeManager.AppTheme.allCases, id: \.self) { theme in
+                                        Circle()
+                                            .fill(colorForTheme(theme))
+                                            .frame(width: 12, height: 12)
+                                            .scaleEffect(themeManager.currentTheme == theme ? 1.2 : 1.0)
+                                            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: themeManager.currentTheme)
+                                    }
+                                    Spacer()
                                 }
-                            }
-                            .pickerStyle(.segmented)
-                            .onChange(of: themeManager.currentTheme) { _, newTheme in
-                                themeManager.setTheme(newTheme)
+                                
+                                Picker("主题模式", selection: $themeManager.currentTheme) {
+                                    ForEach(ThemeManager.AppTheme.allCases, id: \.self) { theme in
+                                        Image(systemName: iconForTheme(theme))
+                                            .tag(theme)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .onChange(of: themeManager.currentTheme) { _, newTheme in
+                                    // 添加过渡动画状态
+                                    isThemeTransitioning = true
+                                    
+                                    // 使用动画设置主题
+                                    withAnimation(.easeInOut(duration: 0.6)) {
+                                        themeManager.setTheme(newTheme)
+                                    }
+                                    
+                                    // 重置过渡状态
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                        isThemeTransitioning = false
+                                    }
+                                    
+                                    // 强制界面刷新
+                                    DispatchQueue.main.async {
+                                        themeManager.objectWillChange.send()
+                                    }
+                                }
+                                .disabled(isThemeTransitioning)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
-                        .background(Color(.systemGroupedBackground))
+                        .background(.regularMaterial)
+                        .overlay(
+                            // 添加过渡时的微妙视觉反馈
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.accentColor.opacity(isThemeTransitioning ? 0.3 : 0), lineWidth: 2)
+                                .animation(.easeInOut(duration: 0.3), value: isThemeTransitioning)
+                        )
                         .cornerRadius(10)
+                        .scaleEffect(isThemeTransitioning ? 0.98 : 1.0)
+                        .animation(.easeInOut(duration: 0.3), value: isThemeTransitioning)
                         
                         Section("LLM 提供商设置") {
                             VStack(alignment: .leading, spacing: 12) {
@@ -192,8 +234,9 @@ struct SettingsView: View {
                                 .cornerRadius(12)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
-                        .background(Color(.systemGroupedBackground))
+                        .background(.regularMaterial)
                         .cornerRadius(10)
                         
                         Section("挂件 Limitless.AI 设置") {
@@ -207,24 +250,41 @@ struct SettingsView: View {
                                 #endif
                                 
                                 Button(action: {
-                                    UserDefaults.standard.set(limitlessAPIKey, forKey: "LimitlessAIAPIKey")
-                                    limitlessSaveStatus = "✅ 已保存"
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                                        UserDefaults.standard.set(limitlessAPIKey, forKey: "LimitlessAIAPIKey")
+                                        limitlessSaveStatus = "✅ 已保存"
+                                    }
+                                    
+                                    // 3秒后清除状态文本
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                                        withAnimation(.easeOut(duration: 0.3)) {
+                                            limitlessSaveStatus = ""
+                                        }
+                                    }
                                 }) {
                                     Text("保存")
                                         .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(limitlessAPIKey.isEmpty)
+                                .scaleEffect(limitlessAPIKey.isEmpty ? 0.95 : 1.0)
+                                .animation(.easeInOut(duration: 0.2), value: limitlessAPIKey.isEmpty)
                                 
                                 if !limitlessSaveStatus.isEmpty {
                                     Text(limitlessSaveStatus)
                                         .font(.caption)
                                         .foregroundColor(.green)
+                                        .transition(.asymmetric(
+                                            insertion: .scale.combined(with: .opacity),
+                                            removal: .opacity
+                                        ))
+                                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: limitlessSaveStatus)
                                 }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
-                        .background(Color(.systemGroupedBackground))
+                        .background(.regularMaterial)
                         .cornerRadius(10)
                         
                         Section("应用帮助") {
@@ -243,12 +303,14 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
-                        .background(Color(.systemGroupedBackground))
+                        .background(.regularMaterial)
                         .cornerRadius(10)
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 6)
+                    .animation(.easeInOut(duration: 0.5).delay(0.1), value: themeManager.currentTheme)
                 }
             }
             .simultaneousGesture(DragGesture().onChanged { _ in
@@ -274,6 +336,14 @@ struct SettingsView: View {
         case .light: return "sun.max"
         case .dark: return "moon"
         case .system: return "gear"
+        }
+    }
+    
+    private func colorForTheme(_ theme: ThemeManager.AppTheme) -> Color {
+        switch theme {
+        case .light: return .orange
+        case .dark: return .purple
+        case .system: return .blue
         }
     }
     

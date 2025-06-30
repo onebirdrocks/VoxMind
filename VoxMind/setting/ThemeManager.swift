@@ -38,7 +38,9 @@ class ThemeManager: ObservableObject {
     }
     
     func setTheme(_ theme: AppTheme) {
-        currentTheme = theme
+        withAnimation(.easeInOut(duration: 0.5)) {
+            currentTheme = theme
+        }
         UserDefaults.standard.set(theme.rawValue, forKey: "AppTheme")
     }
 }

@@ -165,6 +165,7 @@ struct VoiceLogListView: View {
                         }
                     }
             }
+            .preferredColorScheme(themeManager.currentTheme.colorScheme)
         }
     }
 }

@@ -44,6 +44,7 @@ struct ContentView: View {
                 Tab("挂件",systemImage: "apps.iphone"){
                     NavigationStack{
                         LifeLogListView()
+                            .environmentObject(themeManager)
                     }
                 }
                 
@@ -129,6 +130,7 @@ struct ContentView: View {
             
         }
         .preferredColorScheme(themeManager.currentTheme.colorScheme)
+        .animation(.easeInOut(duration: 0.5), value: themeManager.currentTheme)
         .onChange(of: showFullScreenRecording) { oldValue, newValue in
             print("🎬 showFullScreenRecording changed: \(oldValue) -> \(newValue)")
             print("🎬 recordingStory when changed: \(recordingStory?.title ?? "nil")")
