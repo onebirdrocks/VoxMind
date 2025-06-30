@@ -13,6 +13,7 @@ struct VoiceLogListView: View {
     @State private var selection: VoiceLog?
     @State private var showingDeleteAlert = false
     @State private var storyToDelete: VoiceLog?
+    @State private var showingSettings = false
     @ObservedObject var apiManager: APIManager
     @Binding var searchText: String
     @Binding var isSearching: Bool
@@ -110,22 +111,9 @@ struct VoiceLogListView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        stopAllAudioPlayback()
-                        
-                        let newStory = VoiceLog.blank()
-                        modelContext.insert(newStory)
-                        
-                        DispatchQueue.main.async {
-                            selection = newStory
-                        }
-                        
-                        print("Created new story: \(newStory.title), isDone: \(newStory.isDone)")
-                        print("Selection set to new story: \(newStory.id)")
+                        showingSettings = true
                     } label: {
-                        
-                        NavigationLink(destination: SettingsView(themeManager: themeManager, apiManager: apiManager)) {
-                                Image(systemName: "gearshape")
-                            }
+                        Image(systemName: "gearshape")
                     }
                 }
             }
@@ -162,6 +150,20 @@ struct VoiceLogListView: View {
         } message: {
             if let story = storyToDelete {
                 Text("确定要删除语音日志「\(story.title)」吗？此操作无法撤销。")
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            NavigationView {
+                SettingsView(themeManager: themeManager, apiManager: apiManager)
+                    .navigationTitle("设置")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("完成") {
+                                showingSettings = false
+                            }
+                        }
+                    }
             }
         }
     }
