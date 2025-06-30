@@ -37,12 +37,14 @@ struct ContentView: View {
             TabView{
                 Tab("本机",systemImage: "house"){
                     NavigationStack{
-                        VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
+                        VoiceLogListView(themeManager:themeManager,apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
                     }
                 }
                 
                 Tab("挂件",systemImage: "apps.iphone"){
+                    NavigationStack{
                         LifeLogListView()
+                    }
                 }
                 
                 Tab("转录",systemImage: "mic.circle"){

@@ -203,8 +203,7 @@ struct RecordView: View {
     }
     
     var body: some View {
-        NavigationView {
-            VStack {
+        VStack {
 
                     VStack(spacing: 30) {
                         Image(systemName: "waveform.circle.fill")
@@ -258,7 +257,6 @@ struct RecordView: View {
             } message: {
                 Text(validationMessage)
             }
-        }
     }
 }
 

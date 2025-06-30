@@ -7,6 +7,7 @@ import Translation
 
 
 struct VoiceLogListView: View {
+    @ObservedObject var themeManager: ThemeManager
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \VoiceLog.title) private var stories: [VoiceLog]
     @State private var selection: VoiceLog?
@@ -121,7 +122,10 @@ struct VoiceLogListView: View {
                         print("Created new story: \(newStory.title), isDone: \(newStory.isDone)")
                         print("Selection set to new story: \(newStory.id)")
                     } label: {
-                        Label("新建录音", systemImage: "plus")
+                        
+                        NavigationLink(destination: SettingsView(themeManager: themeManager, apiManager: apiManager)) {
+                                Image(systemName: "gearshape")
+                            }
                     }
                 }
             }

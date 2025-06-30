@@ -303,8 +303,7 @@ struct LifeLogListView: View {
     }
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
                 // 顶部栏
                 HStack {
 
@@ -423,7 +422,6 @@ struct LifeLogListView: View {
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
             #endif
-        }
         .sheet(isPresented: $showDatePicker) {
             NavigationView {
                 VStack {
