@@ -113,17 +113,17 @@ struct FullScreenRecordingView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding()
                                 .id("translatedText")
-                                .onChange(of: story.translatedText) { _, _ in
-                                    withAnimation(.easeOut(duration: 0.3)) {
-                                        proxy.scrollTo("translatedText", anchor: .bottom)
-                                    }
-                                }
                         } else {
                             Text("翻译将在这里显示...")
                                 .foregroundStyle(themeManager.currentTheme == .dark ? .green.opacity(0.5) : .green.opacity(0.6))
                                 .font(.body)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding()
+                        }
+                    }
+                    .onChange(of: story.translatedText) { _, _ in
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo("translatedText", anchor: .bottom)
                         }
                     }
                 }

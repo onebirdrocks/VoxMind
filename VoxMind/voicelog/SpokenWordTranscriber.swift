@@ -180,15 +180,23 @@ final class SpokenWordTranscriber: Sendable {
             throw TranscriptionError.failedToSetupRecognitionStream
         }
         
-        analyzer = SpeechAnalyzer(modules: [transcriber])
-        
+        // 确保模型准备就绪后再创建analyzer
         do {
             try await ensureModel(transcriber: transcriber, locale: transcriptionLocale)
             print("✅ Speech recognition model loaded successfully for \(transcriptionLocale)")
+            
+            // 额外等待时间让系统完成模型分配
+            print("⏱️ Waiting for model allocation to complete...")
+            try await Task.sleep(nanoseconds: 2_000_000_000) // 等待2秒
+            
         } catch let error as TranscriptionError {
             print("❌ Failed to load speech recognition model: \(error)")
             return
         }
+        
+        // 在模型确保就绪后创建analyzer
+        analyzer = SpeechAnalyzer(modules: [transcriber])
+        print("🔧 SpeechAnalyzer created with transcriber")
         
         self.analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
         print("🎤 Best available audio format: \(String(describing: analyzerFormat))")
@@ -704,13 +712,31 @@ final class SpokenWordTranscriber: Sendable {
 
 extension SpokenWordTranscriber {
     public func ensureModel(transcriber: SpeechTranscriber, locale: Locale) async throws {
+        print("🔍 Ensuring model for locale: \(locale.identifier)")
+        
         guard await supported(locale: locale) else {
+            print("❌ Locale \(locale.identifier) is not supported")
             throw TranscriptionError.localeNotSupported
         }
         
-        if await installed(locale: locale) {
-            return
+        let isInstalled = await installed(locale: locale)
+        print("🔍 Model installed for \(locale.identifier): \(isInstalled)")
+        
+        if isInstalled {
+            // Check if model is allocated
+            let allocatedLocales = await AssetInventory.allocatedLocales
+            let isAllocated = allocatedLocales.contains { $0.identifier == locale.identifier }
+            print("🔍 Model allocated for \(locale.identifier): \(isAllocated)")
+            
+            if !isAllocated {
+                print("🔧 Model installed but not allocated, forcing re-download to ensure allocation...")
+                // Force download and install to ensure proper allocation
+                try await downloadIfNeeded(for: transcriber)
+            } else {
+                print("✅ Model is properly installed and allocated for \(locale.identifier)")
+            }
         } else {
+            print("🔄 Model not installed, downloading for \(locale.identifier)...")
             try await downloadIfNeeded(for: transcriber)
         }
     }
@@ -728,7 +754,26 @@ extension SpokenWordTranscriber {
     func downloadIfNeeded(for module: SpeechTranscriber) async throws {
         if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
             self.downloadProgress = downloader.progress
+            print("🔄 Starting download for Speech model...")
             try await downloader.downloadAndInstall()
+            print("✅ Speech model download completed")
+            
+            // After download, ensure the model is properly allocated
+            print("🔧 Ensuring model allocation after download...")
+            try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second for system to process
+            
+            // Verify allocation after download
+            let allocatedLocales = await AssetInventory.allocatedLocales
+            let currentLocaleAllocated = allocatedLocales.contains { $0.identifier == transcriptionLocale.identifier }
+            print("🔍 Post-download allocation check for \(transcriptionLocale.identifier): \(currentLocaleAllocated)")
+            
+            if currentLocaleAllocated {
+                print("✅ Model successfully allocated after download")
+            } else {
+                print("⚠️ Model downloaded but not allocated, this may cause recognition issues")
+            }
+        } else {
+            print("ℹ️ No download needed for Speech model")
         }
     }
     
