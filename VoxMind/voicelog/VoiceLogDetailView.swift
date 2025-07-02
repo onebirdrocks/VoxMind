@@ -1192,7 +1192,7 @@ struct VoiceLogDetailView: View {
             print("❌ \(selectedProvider.displayName) API Key not configured. Please set it in Settings.")
             await MainActor.run {
                 story.originalSummary = "⚠️ 请在设置中配置 \(selectedProvider.displayName) API Key 以生成摘要"
-                story.chineseSummary = "⚠️ 请在设置中配置 \(selectedProvider.displayName) API Key 以生成摘要"
+                story.translatedSummary = "⚠️ 请在设置中配置 \(selectedProvider.displayName) API Key 以生成摘要"
             }
             return
         }
@@ -1205,7 +1205,7 @@ struct VoiceLogDetailView: View {
         // 显示生成中状态
         await MainActor.run {
             story.originalSummary = "🤖 正在使用 \(selectedProvider.displayName) (\(selectedModel.displayName)) 生成标题和摘要..."
-            story.chineseSummary = "🤖 正在使用 \(selectedProvider.displayName) (\(selectedModel.displayName)) 生成标题和摘要..."
+            story.translatedSummary = "🤖 正在使用 \(selectedProvider.displayName) (\(selectedModel.displayName)) 生成标题和摘要..."
         }
         
         // 重试机制：最多重试3次
@@ -1223,7 +1223,7 @@ struct VoiceLogDetailView: View {
                 await MainActor.run {
                     story.title = response.title
                     story.originalSummary = response.originalSummary
-                    story.chineseSummary = response.chineseSummary
+                    story.translatedSummary = response.chineseSummary
                 }
                 print("✅ Generated title: '\(response.title)'")
                 print("✅ Generated original summary: '\(response.originalSummary.prefix(100))...'")
@@ -1243,7 +1243,7 @@ struct VoiceLogDetailView: View {
                     // 更新重试状态
                     await MainActor.run {
                         story.originalSummary = "🔄 生成失败，正在重试 (\(attempt + 1)/3)..."
-                        story.chineseSummary = "🔄 生成失败，正在重试 (\(attempt + 1)/3)..."
+                        story.translatedSummary = "🔄 生成失败，正在重试 (\(attempt + 1)/3)..."
                     }
                 }
             }
@@ -1253,7 +1253,7 @@ struct VoiceLogDetailView: View {
         await MainActor.run {
             let errorMessage = getErrorMessage(from: lastError)
             story.originalSummary = "❌ AI 摘要生成失败: \(errorMessage)"
-            story.chineseSummary = "❌ AI 摘要生成失败: \(errorMessage)"
+            story.translatedSummary = "❌ AI 摘要生成失败: \(errorMessage)"
         }
         print("❌ All attempts failed. Final error: \(lastError?.localizedDescription ?? "Unknown error")")
     }
@@ -2016,7 +2016,7 @@ struct SummaryView: View {
                     }
                 }
                 
-                if let chineseSummary = story.chineseSummary, !chineseSummary.isEmpty {
+                if let chineseSummary = story.translatedSummary, !chineseSummary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(chineseSummary)
                             .font(.body)
@@ -2028,7 +2028,7 @@ struct SummaryView: View {
                     }
                 }
                 
-                if story.originalSummary == nil && story.chineseSummary == nil {
+                if story.originalSummary == nil && story.translatedSummary == nil {
                     VStack(spacing: 16) {
                         Image(systemName: "doc.text")
                             .font(.system(size: 50))
@@ -2099,7 +2099,7 @@ struct SummaryView: View {
         if apiKey.isEmpty {
             await MainActor.run {
                 story.originalSummary = "⚠️ 请在设置中配置 DeepSeek API Key 以生成摘要"
-                story.chineseSummary = "⚠️ 请在设置中配置 DeepSeek API Key 以生成摘要"
+                story.translatedSummary = "⚠️ 请在设置中配置 DeepSeek API Key 以生成摘要"
             }
             return
         }
@@ -2107,7 +2107,7 @@ struct SummaryView: View {
         // 显示重新生成中状态
         await MainActor.run {
             story.originalSummary = "🤖 正在重新生成摘要..."
-            story.chineseSummary = "🤖 正在重新生成摘要..."
+            story.translatedSummary = "🤖 正在重新生成摘要..."
         }
         
         // 重试机制：最多重试3次
@@ -2125,7 +2125,7 @@ struct SummaryView: View {
                 await MainActor.run {
                     story.title = response.title
                     story.originalSummary = response.originalSummary
-                    story.chineseSummary = response.chineseSummary
+                    story.translatedSummary = response.chineseSummary
                 }
                 print("✅ Manual regeneration successful")
                 return // 成功后退出重试循环
@@ -2140,7 +2140,7 @@ struct SummaryView: View {
                     
                     await MainActor.run {
                         story.originalSummary = "🔄 重新生成失败，正在重试 (\(attempt + 1)/3)..."
-                        story.chineseSummary = "🔄 重新生成失败，正在重试 (\(attempt + 1)/3)..."
+                        story.translatedSummary = "🔄 重新生成失败，正在重试 (\(attempt + 1)/3)..."
                     }
                 }
             }
@@ -2150,7 +2150,7 @@ struct SummaryView: View {
         await MainActor.run {
             let errorMessage = getErrorMessage(from: lastError)
             story.originalSummary = "❌ 重新生成失败: \(errorMessage)"
-            story.chineseSummary = "❌ 重新生成失败: \(errorMessage)"
+            story.translatedSummary = "❌ 重新生成失败: \(errorMessage)"
         }
     }
     

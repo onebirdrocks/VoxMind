@@ -403,7 +403,8 @@ struct FullScreenRecordingView: View {
                         await MainActor.run {
                             story.title = title
                             story.originalSummary = finalOriginalSummary
-                            story.chineseSummary = finalTranslatedSummary.isEmpty ? finalOriginalSummary : finalTranslatedSummary
+                            story.translatedSummary = finalTranslatedSummary.isEmpty ? finalOriginalSummary : finalTranslatedSummary
+                            SpotlightManager.shared.updateVoiceLog(vlog: story)
                             print("✅ 已更新 story 的标题和摘要")
                         }
                     } else {
@@ -411,7 +412,8 @@ struct FullScreenRecordingView: View {
                         await MainActor.run {
                             story.title = title
                             story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
-                            story.chineseSummary = story.originalSummary
+                            story.translatedSummary = story.originalSummary
+                            SpotlightManager.shared.updateVoiceLog(vlog: story)
                             print("🔄 已设置默认摘要")
                         }
                     }
@@ -421,7 +423,8 @@ struct FullScreenRecordingView: View {
                     await MainActor.run {
                         story.title = "语音记录 \(Date().formatted(.dateTime.month().day().hour().minute()))"
                         story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
-                        story.chineseSummary = story.originalSummary
+                        story.translatedSummary = story.originalSummary
+                        SpotlightManager.shared.updateVoiceLog(vlog: story)
                         print("🔄 已设置默认标题和摘要")
                     }
                 }
@@ -431,7 +434,8 @@ struct FullScreenRecordingView: View {
                 await MainActor.run {
                     story.title = "语音记录 \(Date().formatted(.dateTime.month().day().hour().minute()))"
                     story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
-                    story.chineseSummary = story.originalSummary
+                    story.translatedSummary = story.originalSummary
+                    SpotlightManager.shared.updateVoiceLog(vlog: story)
                     print("🔄 已设置默认标题和摘要")
                 }
             }
@@ -442,7 +446,7 @@ struct FullScreenRecordingView: View {
             await MainActor.run {
                 story.title = "语音记录 \(Date().formatted(.dateTime.month().day().hour().minute()))"
                 story.originalSummary = String(transcriptText.prefix(100)) + (transcriptText.count > 100 ? "..." : "")
-                story.chineseSummary = story.originalSummary
+                story.translatedSummary = story.originalSummary
                 print("🔄 已设置默认标题和摘要")
             }
         }

@@ -224,7 +224,8 @@ struct RecordView: View {
                                 saveLanguageSelection()
                             let newStory = VoiceLog.blank()
                             modelContext.insert(newStory)
-                                onStartRecording(newStory, selectedInputLanguage, selectedTargetLanguage)
+                            SpotlightManager.shared.insertVoiceLog(vlog: newStory)
+                            onStartRecording(newStory, selectedInputLanguage, selectedTargetLanguage)
                             print("Created new story for recording: \(newStory.title)")
                                 print("Selected languages: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
                             } else {

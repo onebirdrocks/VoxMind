@@ -26,7 +26,7 @@ class VoiceLog: Identifiable {
     var translatedTextData: Data? // Store AttributedString as Data
     var audioTimeRangeData: Data? // Store audioTimeRange information
     var originalSummary: String?
-    var chineseSummary: String?
+    var translatedSummary: String?
     var audioFileName: String? // Store filename instead of full URL
     var isDone: Bool
     
@@ -240,7 +240,7 @@ class VoiceLog: Identifiable {
         self.id = UUID()
         self.title = title
         self.originalSummary = originalSummary
-        self.chineseSummary = chineseSummary
+        self.translatedSummary = chineseSummary
         self.isDone = isDone
         
         // Initialize stored properties first

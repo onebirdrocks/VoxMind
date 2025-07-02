@@ -26,7 +26,7 @@ struct VoiceLogListView: View {
                 story.title.localizedCaseInsensitiveContains(searchText) ||
                 String(story.text.characters).localizedCaseInsensitiveContains(searchText) ||
                 (story.originalSummary?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                (story.chineseSummary?.localizedCaseInsensitiveContains(searchText) ?? false)
+                (story.translatedSummary?.localizedCaseInsensitiveContains(searchText) ?? false)
             }
         }
     }
@@ -55,6 +55,7 @@ struct VoiceLogListView: View {
             
             do {
                 try modelContext.save()
+                SpotlightManager.shared.deleteVoiceLog(vLogID: story.id.uuidString)
                 print("Successfully saved context after deletion")
             } catch {
                 print("Failed to save context after deletion: \(error)")

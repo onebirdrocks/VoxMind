@@ -16,7 +16,7 @@ struct SearchView: View {
                 story.title.localizedCaseInsensitiveContains(searchText) ||
                 String(story.text.characters).localizedCaseInsensitiveContains(searchText) ||
                 (story.originalSummary?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                (story.chineseSummary?.localizedCaseInsensitiveContains(searchText) ?? false)
+                (story.translatedSummary?.localizedCaseInsensitiveContains(searchText) ?? false)
             }
         }
     }
