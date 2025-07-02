@@ -4,7 +4,41 @@ import Speech
 import Combine
 import Foundation
 import Translation
+import AVFoundation
 
+// 音频输入设备类型
+enum AudioInputDevice {
+    case builtInMic        // 内置麦克风
+    case bluetoothHFP      // 蓝牙耳机 (HFP)
+    case bluetoothA2DP     // 蓝牙耳机 (A2DP)
+    case airPods           // AirPods
+    case headsetMic        // 有线耳机麦克风
+    case externalMic       // 外置麦克风
+    case unknown           // 未知设备
+    
+    var displayName: String {
+        switch self {
+        case .builtInMic: return "iPhone 麦克风"
+        case .bluetoothHFP: return "蓝牙耳机"
+        case .bluetoothA2DP: return "蓝牙耳机"
+        case .airPods: return "AirPods"
+        case .headsetMic: return "有线耳机"
+        case .externalMic: return "外置麦克风"
+        case .unknown: return "音频设备"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .builtInMic: return "iphone"
+        case .bluetoothHFP, .bluetoothA2DP: return "headphones"
+        case .airPods: return "airpods"
+        case .headsetMic: return "headphones"
+        case .externalMic: return "mic.external"
+        case .unknown: return "mic"
+        }
+    }
+}
 
 
 // 全屏录音视图
@@ -23,6 +57,12 @@ struct FullScreenRecordingView: View {
     @State private var stopCountdown = 0
     @State private var isGeneratingTitleAndSummary = false
     @State private var translationSession: TranslationSession?
+    @State private var currentAudioInputDevice: AudioInputDevice = .unknown
+    @StateObject private var waveformAnalyzer = RecordingAudioAnalyzer()
+    @State private var waveformHeights: [CGFloat] = Array(repeating: 2, count: 80)
+    @State private var waveformTimer: Timer?
+    @State private var recordingDuration: TimeInterval = 0
+    @State private var durationTimer: Timer?
     
     var body: some View {
         ZStack {
@@ -33,10 +73,17 @@ struct FullScreenRecordingView: View {
             VStack(spacing: 20) {
                 // 语言显示 - 移到顶部，更紧凑
                 VStack(spacing: 4) {
-                    Text("录音中...")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.8) : .primary.opacity(0.8))
+                    // 音频输入设备显示
+                    HStack(spacing: 4) {
+                        Image(systemName: currentAudioInputDevice.iconName)
+                            .font(.caption2)
+                            .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.6) : .primary.opacity(0.6))
+                        
+                        Text("\(currentAudioInputDevice.displayName) 录音中...")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.8) : .primary.opacity(0.8))
+                    }
                     
                     HStack(spacing: 6) {
                         VStack(spacing: 1) {
@@ -132,6 +179,92 @@ struct FullScreenRecordingView: View {
                 .cornerRadius(12)
                 .padding(.horizontal)
                 
+                // 波形显示区域 - 仅在录制时显示
+                if isRecording {
+                    VStack(spacing: 12) {
+                        // 录制时长显示
+                        HStack(spacing: 8) {
+                            Image(systemName: "waveform")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                            
+                            Text(formatDuration(recordingDuration))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(themeManager.currentTheme == .dark ? .white.opacity(0.9) : .primary.opacity(0.9))
+                            
+                            Circle()
+                                .fill(.red)
+                                .frame(width: 6, height: 6)
+                                .opacity(0.8)
+                                .scaleEffect(1.2)
+                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isRecording)
+                        }
+                        
+                        // 专业波形显示
+                        VStack(spacing: 6) {
+                            // 波形容器
+                            ZStack {
+                                // 背景网格线（可选）
+                                HStack(spacing: 0) {
+                                    ForEach(0..<8, id: \.self) { _ in
+                                        Rectangle()
+                                            .fill(themeManager.currentTheme == .dark ? .white.opacity(0.05) : .black.opacity(0.05))
+                                            .frame(width: 1)
+                                        Spacer()
+                                    }
+                                }
+                                
+                                // 波形显示
+                                HStack(spacing: 1) {
+                                    ForEach(0..<80, id: \.self) { index in
+                                        RoundedRectangle(cornerRadius: 0.5)
+                                            .fill(professionalWaveformColor(for: waveformHeights[index], index: index))
+                                            .frame(width: 2, height: max(2, waveformHeights[index]))
+                                            .animation(.easeInOut(duration: 0.1), value: waveformHeights[index])
+                                    }
+                                }
+                            }
+                            .frame(height: 60)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(themeManager.currentTheme == .dark ? .black.opacity(0.3) : .white.opacity(0.8))
+                                    .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                            )
+                            .padding(.horizontal)
+                            
+                            // 音量级别指示
+                            HStack(spacing: 4) {
+                                Text("音量:")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                
+                                // 音量条
+                                GeometryReader { geometry in
+                                    ZStack(alignment: .leading) {
+                                        // 背景
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(themeManager.currentTheme == .dark ? .white.opacity(0.2) : .black.opacity(0.2))
+                                        
+                                        // 音量指示
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(volumeLevelColor())
+                                            .frame(width: geometry.size.width * currentVolumeLevel())
+                                            .animation(.easeInOut(duration: 0.1), value: currentVolumeLevel())
+                                    }
+                                }
+                                .frame(height: 4)
+                                
+                                Text("\(Int(currentVolumeLevel() * 100))%")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 30, alignment: .trailing)
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
+                    .transition(.opacity.combined(with: .scale))
+                }
+                
                 Spacer()
                 
                 // 录音控制按钮 - 更小，适配主题
@@ -203,9 +336,12 @@ struct FullScreenRecordingView: View {
         }
         .onAppear {
             setupRecording()
+            updateAudioInputDevice()
+            startAudioRouteChangeMonitoring()
         }
         .onDisappear {
             cleanupRecording()
+            stopAudioRouteChangeMonitoring()
         }
         .translationTask(
             TranslationSession.Configuration(
@@ -232,7 +368,14 @@ struct FullScreenRecordingView: View {
             get: { story },
             set: { _ in }
         ))
-        print("🎬 Recorder created")
+        
+        // 设置音频级别回调
+        recorder.audioLevelCallback = { audioLevel in
+            Task { @MainActor in
+                self.updateWaveformWithAudioData(audioLevel)
+            }
+        }
+        print("🎬 Recorder created with audio level callback")
         
         // 设置语言
         Task {
@@ -263,7 +406,8 @@ struct FullScreenRecordingView: View {
             print("✅ Microphone authorized")
             await MainActor.run {
                 isRecording = true
-                print("🎬 isRecording set to true")
+                startWaveformAnimation()
+                print("🎬 isRecording set to true, 波形动画已启动")
             }
             
             do {
@@ -274,6 +418,8 @@ struct FullScreenRecordingView: View {
                 print("❌ Recording failed: \(error)")
                 await MainActor.run {
                     isRecording = false
+                    stopWaveformAnimation()
+                    print("🎬 录制失败，波形动画已停止")
                 }
             }
         } else {
@@ -302,6 +448,8 @@ struct FullScreenRecordingView: View {
                         isRecording = false
                         isStoppingRecording = false
                         isGeneratingTitleAndSummary = true
+                        stopWaveformAnimation()
+                        print("🎬 录制停止，波形动画已停止")
                     }
                     
                     // 生成标题和摘要
@@ -606,6 +754,200 @@ struct FullScreenRecordingView: View {
     private func cleanupRecording() {
         speechTranscriber?.clearTranslationSession()
         translationSession = nil
+        stopWaveformAnimation()
+        print("🎬 清理录制资源，波形动画已停止")
+    }
+    
+    // MARK: - 音频输入设备检测
+    
+    private func updateAudioInputDevice() {
+        #if os(iOS)
+        let audioSession = AVAudioSession.sharedInstance()
+        
+        guard let currentRoute = audioSession.currentRoute.inputs.first else {
+            currentAudioInputDevice = .unknown
+            print("🎤 无法获取当前音频输入设备")
+            return
+        }
+        
+        let portType = currentRoute.portType
+        let portName = currentRoute.portName
+        
+        print("🎤 当前音频输入设备:")
+        print("   类型: \(portType.rawValue)")
+        print("   名称: \(portName)")
+        
+        // 根据端口类型和名称判断设备类型
+        switch portType {
+        case .builtInMic:
+            currentAudioInputDevice = .builtInMic
+            print("🎤 检测到: iPhone 内置麦克风")
+            
+        case .bluetoothHFP:
+            if portName.lowercased().contains("airpods") {
+                currentAudioInputDevice = .airPods
+                print("🎤 检测到: AirPods")
+            } else {
+                currentAudioInputDevice = .bluetoothHFP
+                print("🎤 检测到: 蓝牙耳机 (HFP)")
+            }
+            
+        case .bluetoothA2DP:
+            if portName.lowercased().contains("airpods") {
+                currentAudioInputDevice = .airPods
+                print("🎤 检测到: AirPods")
+            } else {
+                currentAudioInputDevice = .bluetoothA2DP
+                print("🎤 检测到: 蓝牙耳机 (A2DP)")
+            }
+            
+        case .headsetMic:
+            currentAudioInputDevice = .headsetMic
+            print("🎤 检测到: 有线耳机麦克风")
+            
+        case .usbAudio:
+            currentAudioInputDevice = .externalMic
+            print("🎤 检测到: USB 外置麦克风")
+            
+        default:
+            // 额外检查设备名称中是否包含已知关键字
+            let lowercaseName = portName.lowercased()
+            if lowercaseName.contains("airpods") {
+                currentAudioInputDevice = .airPods
+                print("🎤 通过名称检测到: AirPods")
+            } else if lowercaseName.contains("bluetooth") || lowercaseName.contains("bt") {
+                currentAudioInputDevice = .bluetoothHFP
+                print("🎤 通过名称检测到: 蓝牙设备")
+            } else {
+                currentAudioInputDevice = .unknown
+                print("🎤 检测到: 未知设备类型 - \(portType.rawValue)")
+            }
+        }
+        #else
+        // macOS 设备检测逻辑可以在此处添加
+        currentAudioInputDevice = .builtInMic
+        print("🎤 macOS: 使用默认音频设备")
+        #endif
+    }
+    
+    private func startAudioRouteChangeMonitoring() {
+        #if os(iOS)
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            print("🔄 音频路由发生变化")
+            
+            // 延迟更新以确保路由变化完成
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // 直接调用更新方法，SwiftUI 会自动处理状态更新
+                self.updateAudioInputDevice()
+            }
+        }
+        #endif
+    }
+    
+    private func stopAudioRouteChangeMonitoring() {
+        #if os(iOS)
+        NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
+        print("🔄 停止音频路由监听")
+        #endif
+    }
+    
+    // MARK: - 波形显示相关方法
+    
+    private func professionalWaveformColor(for height: CGFloat, index: Int) -> Color {
+        let normalizedHeight = height / 60.0 // 基于最大高度60进行归一化
+        
+        // 创建类似iOS语音备忘录的渐变色彩
+        if normalizedHeight > 0.8 {
+            return Color(red: 1.0, green: 0.2, blue: 0.2) // 强红色
+        } else if normalizedHeight > 0.6 {
+            return Color(red: 1.0, green: 0.6, blue: 0.0) // 橙色
+        } else if normalizedHeight > 0.4 {
+            return Color(red: 0.2, green: 0.8, blue: 1.0) // 蓝色
+        } else if normalizedHeight > 0.1 {
+            return Color(red: 0.4, green: 0.7, blue: 1.0) // 浅蓝色
+        } else {
+            return Color(red: 0.6, green: 0.6, blue: 0.6).opacity(0.5) // 灰色静音
+        }
+    }
+    
+    private func volumeLevelColor() -> Color {
+        let level = currentVolumeLevel()
+        if level > 0.8 {
+            return .red
+        } else if level > 0.6 {
+            return .orange
+        } else if level > 0.3 {
+            return .green
+        } else {
+            return .blue
+        }
+    }
+    
+    private func currentVolumeLevel() -> CGFloat {
+        // 计算最近几个波形条的平均高度作为当前音量
+        let recentCount = min(10, waveformHeights.count)
+        let recentHeights = Array(waveformHeights.suffix(recentCount))
+        let averageHeight = recentHeights.reduce(0, +) / CGFloat(recentCount)
+        return min(averageHeight / 60.0, 1.0) // 归一化到0-1
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    private func startWaveformAnimation() {
+        print("🌊 启动实时音频波形监听")
+        // 重置波形为静默状态
+        waveformHeights = Array(repeating: 2, count: 80)
+        
+        // 启动录制时长计时器
+        recordingDuration = 0
+        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            self.recordingDuration += 0.1
+        }
+    }
+    
+    private func stopWaveformAnimation() {
+        print("🌊 停止音频波形监听")
+        waveformTimer?.invalidate()
+        waveformTimer = nil
+        
+        // 停止时长计时器
+        durationTimer?.invalidate()
+        durationTimer = nil
+        
+        // 重置波形为平静状态
+        withAnimation(.easeOut(duration: 1.0)) {
+            waveformHeights = Array(repeating: 2, count: 80)
+        }
+    }
+    
+    // 处理真实音频数据的波形更新
+    private func updateWaveformWithAudioData(_ audioLevel: Float) {
+        // 将音频级别转换为波形高度 (0-60像素范围，更细腻的变化)
+        let normalizedLevel = min(max(audioLevel, 0.0), 1.0)
+        let baseHeight = CGFloat(2 + normalizedLevel * 58) // 2-60像素范围
+        
+        // 添加轻微的自然变化
+        let variation = CGFloat.random(in: 0.95...1.05)
+        let newHeight = max(2, min(60, baseHeight * variation))
+        
+        // 使用快速平滑动画更新波形（滚动效果）
+        withAnimation(.easeInOut(duration: 0.05)) {
+            waveformHeights.removeFirst()
+            waveformHeights.append(newHeight)
+        }
+        
+        // 减少日志输出，只在显著音频活动时记录
+        if audioLevel > 0.15 {
+            print("🌊 音频级别: \(String(format: "%.2f", audioLevel)), 波形高度: \(String(format: "%.1f", newHeight))")
+        }
     }
 }
 

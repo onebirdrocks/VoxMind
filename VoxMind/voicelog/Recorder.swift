@@ -27,6 +27,9 @@ class Recorder {
     var file: AVAudioFile?
 
     private(set) var isMicAuthorized = false
+    
+    // 添加音频级别回调支持  
+    var audioLevelCallback: ((Float) -> Void)?
 
     init(transcriber: SpokenWordTranscriber, story: Binding<VoiceLog>) {
         self.audioEngine = AVAudioEngine()
@@ -161,7 +164,7 @@ class Recorder {
     #if os(iOS)
     private func setUpAudioSession() throws {
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.duckOthers])
+        try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP, .duckOthers])
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
     }
     
@@ -195,6 +198,13 @@ class Recorder {
             // 转换格式
             if let convertedBuffer = self.convertBuffer(buffer, from: inputFormat, to: targetFormat) {
                 writeBufferToDisk(buffer: convertedBuffer)
+                
+                // 计算音频级别并回调
+                let audioLevel = self.calculateAudioLevel(from: convertedBuffer)
+                DispatchQueue.main.async {
+                    self.audioLevelCallback?(audioLevel)
+                }
+                
                 self.outputContinuation?.yield(convertedBuffer)
             }
         }
@@ -263,6 +273,23 @@ class Recorder {
         } catch {
             debugPrint("File writing error: \(error)")
         }
+    }
+    
+    private func calculateAudioLevel(from buffer: AVAudioPCMBuffer) -> Float {
+        guard let channelData = buffer.floatChannelData?[0] else { return 0.0 }
+        
+        let frameLength = Int(buffer.frameLength)
+        let samples = Array(UnsafeBufferPointer(start: channelData, count: frameLength))
+        
+        // 计算RMS (Root Mean Square)
+        guard !samples.isEmpty else { return 0.0 }
+        
+        let sum = samples.reduce(0) { $0 + $1 * $1 }
+        let rms = sqrt(sum / Float(samples.count))
+        
+        // 归一化到 0-1 范围
+        let normalizedRMS = min(rms * 10, 1.0)
+        return pow(normalizedRMS, 0.4) // 平方根缩放，使小振幅更明显
     }
     
     func playRecording() {
