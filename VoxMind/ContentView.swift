@@ -5,25 +5,21 @@ import Combine
 import Foundation
 import Translation
 
-
-
-
-
-
-
-
-
-
-
 struct ContentView: View {
+    @Binding var spotlightVoiceLogID: String?
+
+    @Query var voiceLogs: [VoiceLog]
+
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var apiManager = APIManager()
     @State private var selectedTab = 0
     @State private var searchText = ""
     @State private var isSearching = false
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "HasCompletedOnboarding")
-    
-    
+
+    // 用于跳转
+    @State private var navigationPath = NavigationPath()
+
     // 全屏录音相关状态
     @State private var showFullScreenRecording = false
     @State private var recordingStory: VoiceLog?
@@ -31,144 +27,101 @@ struct ContentView: View {
     @State private var recordingTargetLanguage: VoiceLogDetailView.LanguageOption = .chinese
     @State private var showRecordingDetailView = false
     @State private var completedRecordingStory: VoiceLog?
-    
+
     var body: some View {
         ZStack {
-            TabView{
-                Tab("本机",systemImage: "house"){
-                    NavigationStack{
-                        VoiceLogListView(themeManager:themeManager,apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
+            TabView(selection: $selectedTab) {
+                NavigationStack(path: $navigationPath) {
+                    VoiceLogListView(
+                        themeManager: themeManager,
+                        apiManager: apiManager,
+                        searchText: $searchText,
+                        isSearching: $isSearching
+                    )
+                    .navigationDestination(for: VoiceLog.self) { log in
+                        VoiceLogDetailView(story: log, apiManager: apiManager)
                     }
                 }
-                
-                Tab("挂件",systemImage: "apps.iphone"){
-                    NavigationStack{
-                        LifeLogListView()
-                            .environmentObject(themeManager)
-                    }
+                .tabItem {
+                    Label("本机", systemImage: "house")
                 }
-                
-                Tab("转录",systemImage: "mic.circle"){
-                    NavigationStack{
-                        RecordView(
-                                            apiManager: apiManager,
-                                            onStartRecording: { story, sourceLanguage, targetLanguage in
-                                                print("🎬 onStartRecording called - setting up full screen recording")
-                                                recordingStory = story
-                                                recordingSourceLanguage = sourceLanguage
-                                                recordingTargetLanguage = targetLanguage
-                                                showFullScreenRecording = true
-                                                print("🎬 showFullScreenRecording set to: \(showFullScreenRecording)")
-                                                print("🎬 recordingStory: \(recordingStory?.title ?? "nil")")
-                                            }
-                                        )
-                    }
-                }
-                
-                Tab(role:.search){
-                    NavigationStack{
-                        SearchView(apiManager: apiManager, searchText: $searchText)
-                    }
-                }
-                
+                .tag(0)
 
-                
+                NavigationStack {
+                    LifeLogListView()
+                        .environmentObject(themeManager)
+                }
+                .tabItem {
+                    Label("挂件", systemImage: "apps.iphone")
+                }
+                .tag(1)
+
+                NavigationStack {
+                    RecordView(
+                        apiManager: apiManager,
+                        onStartRecording: { story, sourceLanguage, targetLanguage in
+                            recordingStory = story
+                            recordingSourceLanguage = sourceLanguage
+                            recordingTargetLanguage = targetLanguage
+                            showFullScreenRecording = true
+                        }
+                    )
+                }
+                .tabItem {
+                    Label("转录", systemImage: "mic.circle")
+                }
+                .tag(2)
+
+                NavigationStack {
+                    SearchView(apiManager: apiManager, searchText: $searchText)
+                }
+                .tabItem {
+                    Label("搜索", systemImage: "magnifyingglass")
+                }
+                .tag(3)
             }
-            .searchable(text: $searchText,prompt: "搜索你的语音日志...")
+            .searchable(text: $searchText, prompt: "搜索你的语音日志...")
             .tabBarMinimizeBehavior(.onScrollDown)
-            .tabViewBottomAccessory{
+            .tabViewBottomAccessory {
                 VoxMindAskBar()
             }
-
-            // 主内容：系统TabView
-            //TabView(selection: $selectedTab) {
-            /**
-            TabView() {
-                VoiceLogListView(apiManager: apiManager, searchText: $searchText, isSearching: $isSearching)
-                   .tabItem {
-                       Image(systemName: "house")
-                       Text("本机")
-                   }
-                .tag(0)
-                
-                                        
-                LifeLogListView()
-                    .tabItem {
-                        Image(systemName: "apps.iphone")
-                        Text("挂件")
-                    }
-                    .tag(1)
-                RecordView(
-                    apiManager: apiManager,
-                    onStartRecording: { story, sourceLanguage, targetLanguage in
-                        print("🎬 onStartRecording called - setting up full screen recording")
-                        recordingStory = story
-                        recordingSourceLanguage = sourceLanguage
-                        recordingTargetLanguage = targetLanguage
-                        showFullScreenRecording = true
-                        print("🎬 showFullScreenRecording set to: \(showFullScreenRecording)")
-                        print("🎬 recordingStory: \(recordingStory?.title ?? "nil")")
-                    }
-                )
-                .environmentObject(themeManager)
-                    .tabItem {
-                        Image(systemName: "mic.circle")
-                        Text("转录")
-                    }
-                    .tag(2)
-                SettingsView(themeManager: themeManager, apiManager: apiManager)
-                    .tabItem {
-                        Image(systemName: "gearshape")
-                        Text("设置")
-                    }
-                    .tag(3)
-                
-            }.searchable(text: $searchText)
-             */
-
-           
-            
         }
         .preferredColorScheme(themeManager.currentTheme.colorScheme)
         .animation(.easeInOut(duration: 0.5), value: themeManager.currentTheme)
-        .onChange(of: showFullScreenRecording) { oldValue, newValue in
-            print("🎬 showFullScreenRecording changed: \(oldValue) -> \(newValue)")
-            print("🎬 recordingStory when changed: \(recordingStory?.title ?? "nil")")
+
+        // 👇 从 Spotlight 唤醒时跳转
+        .onChange(of: spotlightVoiceLogID) { id in
+            guard let id = id, let uuid = UUID(uuidString: id) else { return }
+            if let match = voiceLogs.first(where: { $0.id == uuid }) {
+                selectedTab = 0
+                navigationPath.append(match)
+            } else {
+                print("⚠️ 未找到 VoiceLog: \(id)")
+            }
         }
+
         .fullScreenCover(isPresented: $showFullScreenRecording) {
-            Group {
-                if let story = recordingStory {
-                    FullScreenRecordingView(
-                        story: story,
-                        apiManager: apiManager,
-                        sourceLanguage: recordingSourceLanguage,
-                        targetLanguage: recordingTargetLanguage,
-                        onDismiss: { completedStory in
-                            showFullScreenRecording = false
-                            recordingStory = nil
-                            if let story = completedStory {
-                                completedRecordingStory = story
-                                showRecordingDetailView = true
-                            }
+            if let story = recordingStory {
+                FullScreenRecordingView(
+                    story: story,
+                    apiManager: apiManager,
+                    sourceLanguage: recordingSourceLanguage,
+                    targetLanguage: recordingTargetLanguage,
+                    onDismiss: { completedStory in
+                        showFullScreenRecording = false
+                        recordingStory = nil
+                        if let story = completedStory {
+                            completedRecordingStory = story
+                            showRecordingDetailView = true
                         }
-                    )
-                    .environmentObject(themeManager)
-                    .onAppear {
-                        print("🎬 FullScreenRecordingView appeared for story: \(story.title)")
                     }
-                } else {
-                    Text("错误：recordingStory 为 nil")
-                        .onAppear {
-                            print("❌ .fullScreenCover triggered but recordingStory is nil")
-                        }
-                }
-            }
-            .onAppear {
-                print("🎬 .fullScreenCover content view appeared")
-                print("🎬 showFullScreenRecording: \(showFullScreenRecording)")
-                print("🎬 recordingStory: \(recordingStory?.title ?? "nil")")
+                )
+                .environmentObject(themeManager)
+            } else {
+                Text("错误：recordingStory 为 nil")
             }
         }
+
         .sheet(isPresented: $showRecordingDetailView) {
             if let story = completedRecordingStory {
                 NavigationView {
@@ -176,12 +129,14 @@ struct ContentView: View {
                 }
             }
         }
+
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView()
                 .onDisappear {
                     showOnboarding = false
                 }
         }
-        
     }
 }
+
+
