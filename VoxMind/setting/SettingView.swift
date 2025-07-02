@@ -11,9 +11,9 @@ struct CustomSecureField: ViewModifier {
             .textInputAutocapitalization(.never)
             .submitLabel(.done)
             .onSubmit {
-                #if os(iOS)
+#if os(iOS)
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                #endif
+#endif
             }
     }
 }
@@ -24,14 +24,14 @@ extension View {
     }
     
     func hideKeyboardOnTap() -> some View {
-        #if os(iOS)
+#if os(iOS)
         return self.contentShape(Rectangle())
             .onTapGesture {
                 UIApplication.shared.windows.first?.endEditing(true)
             }
-        #else
+#else
         return self
-        #endif
+#endif
     }
 }
 
@@ -200,13 +200,13 @@ struct SettingsView: View {
                                     set: { apiManager.updateAPIKey($0, for: apiManager.selectedProvider) }
                                 )
                                 
-                                #if os(iOS)
+#if os(iOS)
                                 CustomSecureTextField(text: currentAPIKey, placeholder: "请输入 \(apiManager.selectedProvider.displayName) API Key")
                                     .frame(height: 40)
-                                #else
+#else
                                 SecureField("请输入 \(apiManager.selectedProvider.displayName) API Key", text: currentAPIKey)
                                     .customSecureFieldStyle()
-                                #endif
+#endif
                                 
                                 if case .none = apiManager.validationStatus {
                                     // 不显示任何状态
@@ -241,13 +241,13 @@ struct SettingsView: View {
                         
                         Section("挂件 Limitless.AI 设置") {
                             VStack(alignment: .leading, spacing: 12) {
-                                #if os(iOS)
+#if os(iOS)
                                 CustomSecureTextField(text: $limitlessAPIKey, placeholder: "请输入 Limitless.AI API Key")
                                     .frame(height: 40)
-                                #else
+#else
                                 SecureField("请输入 Limitless.AI API Key", text: $limitlessAPIKey)
                                     .customSecureFieldStyle()
-                                #endif
+#endif
                                 
                                 Button(action: {
                                     withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
@@ -314,17 +314,17 @@ struct SettingsView: View {
                 }
             }
             .simultaneousGesture(DragGesture().onChanged { _ in
-                #if os(iOS)
+#if os(iOS)
                 UIApplication.shared.windows.first?.endEditing(true)
-                #endif
+#endif
             })
             .scrollDismissesKeyboard(.immediately)
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            #if os(iOS)
+#if os(iOS)
             UIApplication.shared.windows.first?.endEditing(true)
-            #endif
+#endif
         }
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView()

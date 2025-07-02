@@ -5,9 +5,9 @@
 //  Created by Ruan Yiming on 2025/6/22.
 //
 /*
-Buffer conversion code for audio inputs.
-Based on Apple's sample code for advanced speech-to-text capabilities.
-*/
+ Buffer conversion code for audio inputs.
+ Based on Apple's sample code for advanced speech-to-text capabilities.
+ */
 
 import Foundation
 import AVFoundation

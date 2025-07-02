@@ -1,11 +1,11 @@
 // MARK: - Debug Configuration
 struct DebugConfig {
     static let isLocalDebug: Bool = {
-        #if DEBUG
+#if DEBUG
         return true
-        #else
+#else
         return false
-        #endif
+#endif
     }()
     
     static func debugPrint(_ items: Any..., separator: String = " ", terminator: String = "\n") {

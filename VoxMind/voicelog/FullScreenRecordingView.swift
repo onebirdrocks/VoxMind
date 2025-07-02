@@ -257,7 +257,7 @@ struct FullScreenRecordingView: View {
                                 Text("\(Int(currentVolumeLevel() * 100))%")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 30, alignment: .trailing)
+                                    .frame(width: 40, alignment: .leading)
                             }
                             .padding(.horizontal)
                         }
@@ -489,15 +489,15 @@ struct FullScreenRecordingView: View {
             // 如果模板文件不存在，使用默认提示词
             prompt = """
             请根据以下语音转录内容，生成标题和摘要。
-
+            
             请严格按照以下 JSON 格式返回，不包含任何其他额外文字：
-
+            
             {
               "title": "生成的标题",
               "original_summary": "English summary of the content...",
               "translated_summary": "中文摘要内容..."
             }
-
+            
             语音转录内容：
             \(transcriptText)
             """
@@ -761,7 +761,7 @@ struct FullScreenRecordingView: View {
     // MARK: - 音频输入设备检测
     
     private func updateAudioInputDevice() {
-        #if os(iOS)
+#if os(iOS)
         let audioSession = AVAudioSession.sharedInstance()
         
         guard let currentRoute = audioSession.currentRoute.inputs.first else {
@@ -823,15 +823,15 @@ struct FullScreenRecordingView: View {
                 print("🎤 检测到: 未知设备类型 - \(portType.rawValue)")
             }
         }
-        #else
+#else
         // macOS 设备检测逻辑可以在此处添加
         currentAudioInputDevice = .builtInMic
         print("🎤 macOS: 使用默认音频设备")
-        #endif
+#endif
     }
     
     private func startAudioRouteChangeMonitoring() {
-        #if os(iOS)
+#if os(iOS)
         NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: nil,
@@ -845,14 +845,14 @@ struct FullScreenRecordingView: View {
                 self.updateAudioInputDevice()
             }
         }
-        #endif
+#endif
     }
     
     private func stopAudioRouteChangeMonitoring() {
-        #if os(iOS)
+#if os(iOS)
         NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
         print("🔄 停止音频路由监听")
-        #endif
+#endif
     }
     
     // MARK: - 波形显示相关方法

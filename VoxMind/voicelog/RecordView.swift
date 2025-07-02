@@ -204,60 +204,60 @@ struct RecordView: View {
     
     var body: some View {
         VStack {
-
-                    VStack(spacing: 30) {
-                        Image(systemName: "waveform.circle.fill")
-                            .font(.system(size: 80))
-                            .foregroundColor(.red)
-                        
-                        Text("开始新的录音")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        
-                        Text("点击下方按钮开始录制您的语音")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        
-                        Button {
-                            if validateLanguageSelection() {
-                                saveLanguageSelection()
-                            let newStory = VoiceLog.blank()
-                            modelContext.insert(newStory)
-                            SpotlightManager.shared.insertVoiceLog(vlog: newStory)
-                            onStartRecording(newStory, selectedInputLanguage, selectedTargetLanguage)
-                            print("Created new story for recording: \(newStory.title)")
-                                print("Selected languages: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
-                            } else {
-                                showValidationAlert = true
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: "mic.fill")
-                                Text("开始录音")
-                            }
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 15)
-                            .background(Color.red)
-                            .cornerRadius(25)
-                        }
-                        // 语言设置区域（加圆角背景和阴影）
-                        LanguageSettingsView(selectedInputLanguage: $selectedInputLanguage, selectedTargetLanguage: $selectedTargetLanguage, supportedLanguages: supportedLanguages)
+            
+            VStack(spacing: 30) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.red)
+                
+                Text("开始新的录音")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text("点击下方按钮开始录制您的语音")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                Button {
+                    if validateLanguageSelection() {
+                        saveLanguageSelection()
+                        let newStory = VoiceLog.blank()
+                        modelContext.insert(newStory)
+                        SpotlightManager.shared.insertVoiceLog(vlog: newStory)
+                        onStartRecording(newStory, selectedInputLanguage, selectedTargetLanguage)
+                        print("Created new story for recording: \(newStory.title)")
+                        print("Selected languages: \(selectedInputLanguage.displayName) → \(selectedTargetLanguage.displayName)")
+                    } else {
+                        showValidationAlert = true
                     }
-                    .padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.systemGroupedBackground))
-                    .onAppear {
-                        loadSupportedLanguages()
+                } label: {
+                    HStack {
+                        Image(systemName: "mic.fill")
+                        Text("开始录音")
                     }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 15)
+                    .background(Color.red)
+                    .cornerRadius(25)
                 }
-            .alert("语言设置错误", isPresented: $showValidationAlert) {
-                Button("确定", role: .cancel) { }
-            } message: {
-                Text(validationMessage)
+                // 语言设置区域（加圆角背景和阴影）
+                LanguageSettingsView(selectedInputLanguage: $selectedInputLanguage, selectedTargetLanguage: $selectedTargetLanguage, supportedLanguages: supportedLanguages)
             }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
+            .onAppear {
+                loadSupportedLanguages()
+            }
+        }
+        .alert("语言设置错误", isPresented: $showValidationAlert) {
+            Button("确定", role: .cancel) { }
+        } message: {
+            Text(validationMessage)
+        }
     }
 }
 

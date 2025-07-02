@@ -22,7 +22,7 @@ extension View {
 extension AVAudioPlayerNode {
     var currentTime: TimeInterval {
         guard let nodeTime: AVAudioTime = self.lastRenderTime, 
-              let playerTime: AVAudioTime = self.playerTime(forNodeTime: nodeTime) else { 
+                let playerTime: AVAudioTime = self.playerTime(forNodeTime: nodeTime) else { 
             return 0 
         }
         
@@ -75,7 +75,7 @@ struct VoiceLogDetailView: View {
     @State private var supportedLanguages: Set<String> = []
     
     // 支持的语言选项
-            enum LanguageOption: String, CaseIterable, Identifiable {
+    enum LanguageOption: String, CaseIterable, Identifiable {
         case english = "en-US"
         case chinese = "zh-Hans"
         case japanese = "ja-JP"
@@ -396,8 +396,8 @@ struct VoiceLogDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack {
-                                        if let translatedText = story.translatedText, !NSAttributedString(translatedText).string.isEmpty {
-                    Text(translatedText)
+                        if let translatedText = story.translatedText, !NSAttributedString(translatedText).string.isEmpty {
+                            Text(translatedText)
                                 .font(.subheadline) // 比原文的title3更小
                                 .fontWeight(.regular) // 常规粗细，与原文的默认粗细形成对比
                                 .foregroundColor(.primary) // 适配明暗模式的主要文字颜色
@@ -664,7 +664,7 @@ struct VoiceLogDetailView: View {
                         .disabled(recorder == nil)
                         .animation(.easeInOut(duration: 0.2), value: recorder == nil)
                     }
-
+                    
                     
                     Spacer()
                 }
@@ -701,8 +701,8 @@ struct VoiceLogDetailView: View {
                             
                             // 确保即使没有文字时也有占位空间
                             if let transcriber = speechTranscriber, 
-                               transcriber.finalizedTranscript.characters.isEmpty && 
-                               transcriber.volatileTranscript.characters.isEmpty {
+                                transcriber.finalizedTranscript.characters.isEmpty && 
+                                transcriber.volatileTranscript.characters.isEmpty {
                                 HStack {
                                     Text("开始说话...")
                                         .font(.title3)
@@ -1905,7 +1905,7 @@ struct OriginalTextView: View {
                 if savedStart < currentPlaybackTime && currentPlaybackTime < savedEnd {
                     // 获取对应的文本范围
                     guard savedTextRange.location >= 0 && 
-                          savedTextRange.location + savedTextRange.length <= highlightedText.characters.count else { continue }
+                            savedTextRange.location + savedTextRange.length <= highlightedText.characters.count else { continue }
                     
                     let startIndex = highlightedText.characters.index(highlightedText.characters.startIndex, offsetBy: savedTextRange.location)
                     let endIndex = highlightedText.characters.index(startIndex, offsetBy: savedTextRange.length)
@@ -1952,37 +1952,37 @@ struct TranslatedTextView: View {
             } else {
                 // 如果没有保存的翻译文本，则根据翻译模型状态显示相应界面
                 switch translationModelStatus {
-                    case .notDownloaded:
-                        VStack {
-                            Text("Translation model not downloaded.")
-                                .foregroundColor(.orange)
-                            Button("Download Translation Model") {
-                                Task {
-                                    await speechTranscriber?.prepareTranslationModel()
-                                }
-                            }
-                            .padding(.top)
-                        }
-                    case .downloading(let progress):
-                        ProgressView("Downloading Translation Model...", value: progress?.fractionCompleted ?? 0, total: 1.0)
-                            .padding()
-                    case .ready:
-                        Text("Translation is in progress or unavailable.")
-                            .foregroundColor(.gray)
-                    case .failed(let error):
-                        Text("Translation failed: \(error.localizedDescription)")
-                            .foregroundColor(.red)
-                            .padding()
-                        
-                        Button("Retry Translation") {
-                            print("Retry Translation button tapped.")
+                case .notDownloaded:
+                    VStack {
+                        Text("Translation model not downloaded.")
+                            .foregroundColor(.orange)
+                        Button("Download Translation Model") {
                             Task {
-                                if let transcriber = speechTranscriber {
-                                    await transcriber.retryTranslation()
-                                }
+                                await speechTranscriber?.prepareTranslationModel()
                             }
                         }
                         .padding(.top)
+                    }
+                case .downloading(let progress):
+                    ProgressView("Downloading Translation Model...", value: progress?.fractionCompleted ?? 0, total: 1.0)
+                        .padding()
+                case .ready:
+                    Text("Translation is in progress or unavailable.")
+                        .foregroundColor(.gray)
+                case .failed(let error):
+                    Text("Translation failed: \(error.localizedDescription)")
+                        .foregroundColor(.red)
+                        .padding()
+                    
+                    Button("Retry Translation") {
+                        print("Retry Translation button tapped.")
+                        Task {
+                            if let transcriber = speechTranscriber {
+                                await transcriber.retryTranslation()
+                            }
+                        }
+                    }
+                    .padding(.top)
                 }
                 Spacer()
             }

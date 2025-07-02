@@ -16,9 +16,9 @@ struct VoxMindAskBar: View {
                     .font(.system(size: 15))
             }
             .padding(.leading, 12)
-
+            
             Spacer()
-
+            
             // 右侧“历史” + 图标
             HStack(spacing: 4) {
                 Text("历史")

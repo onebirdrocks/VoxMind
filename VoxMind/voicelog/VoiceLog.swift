@@ -81,15 +81,15 @@ class VoiceLog: Identifiable {
     // 获取保存的时间范围信息（带缓存优化）
     func getAudioTimeRanges() -> [AudioTimeRangeInfo] {
         guard let timeRangeData = audioTimeRangeData else {
-    #if DEBUG
+#if DEBUG
             print("📱 getAudioTimeRanges: No audioTimeRangeData found")
-            #endif
+#endif
             return []
         }
         
         // 检查缓存是否有效
         if let cached = _cachedAudioTimeRanges, 
-           let cachedHash = _cacheDataHash,
+            let cachedHash = _cacheDataHash,
            cachedHash == timeRangeData {
             // 减少缓存使用的打印频率，避免播放时过度输出
             return cached
@@ -97,18 +97,18 @@ class VoiceLog: Identifiable {
         
         // 解码数据并更新缓存
         guard let timeRanges = try? JSONDecoder().decode([AudioTimeRangeInfo].self, from: timeRangeData) else {
-    #if DEBUG
+#if DEBUG
             print("📱 getAudioTimeRanges: Failed to decode audioTimeRangeData")
-            #endif
+#endif
             return []
         }
         
 #if DEBUG
         print("📱 getAudioTimeRanges: Successfully decoded \(timeRanges.count) entries from storage")
-        #endif
+#endif
         
         // 只在调试模式下输出详细信息，减少性能影响
-        #if DEBUG
+#if DEBUG
         if timeRanges.count <= 5 {
             timeRanges.enumerated().forEach { index, range in
                 print("   📱 Entry \(index): start=\(String(format: "%.2f", range.startSeconds))s, end=\(String(format: "%.2f", range.endSeconds))s, textRange=\(range.textRange)")
@@ -120,7 +120,7 @@ class VoiceLog: Identifiable {
             }
             print("   📱 ... and \(timeRanges.count - 2) more entries")
         }
-        #endif
+#endif
         
         // 更新缓存
         _cachedAudioTimeRanges = timeRanges
@@ -131,7 +131,7 @@ class VoiceLog: Identifiable {
     
     // 设置audioTimeRange数据并清除缓存
     func setAudioTimeRanges(_ timeRanges: [AudioTimeRangeInfo]) {
-        #if DEBUG
+#if DEBUG
         print("💾 setAudioTimeRanges: Attempting to save \(timeRanges.count) entries")
         
         // 只在调试模式下打印详细信息，减少性能影响
@@ -146,7 +146,7 @@ class VoiceLog: Identifiable {
             }
             print("   💾 ... and \(timeRanges.count - 2) more entries to save")
         }
-        #endif
+#endif
         
         if let data = try? JSONEncoder().encode(timeRanges) {
             audioTimeRangeData = data
@@ -154,7 +154,7 @@ class VoiceLog: Identifiable {
             _cachedAudioTimeRanges = nil
             _cacheDataHash = nil
             
-            #if DEBUG
+#if DEBUG
             print("💾 setAudioTimeRanges: Successfully encoded and saved \(timeRanges.count) entries (data size: \(data.count) bytes)")
             
             // 立即验证保存是否成功
@@ -164,11 +164,11 @@ class VoiceLog: Identifiable {
             } else {
                 print("💾 setAudioTimeRanges: ❌ Verification failed - expected \(timeRanges.count) entries, got \(verification.count)")
             }
-            #endif
+#endif
         } else {
-            #if DEBUG
+#if DEBUG
             print("💾 setAudioTimeRanges: ❌ Failed to encode audioTimeRange data")
-            #endif
+#endif
         }
     }
     
@@ -235,7 +235,7 @@ class VoiceLog: Identifiable {
             }
         }
     }
-
+    
     init(title: String, text: AttributedString, translatedText: AttributedString? = nil, originalSummary: String? = nil, chineseSummary: String? = nil, url: URL? = nil, isDone: Bool = false) {
         self.id = UUID()
         self.title = title
@@ -269,7 +269,7 @@ class VoiceLog: Identifiable {
             self.audioFileName = nil
         }
     }
-
+    
     static func blank() -> VoiceLog {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd-HH-mm"
@@ -279,11 +279,11 @@ class VoiceLog: Identifiable {
         print("Created blank story: title=\(story.title), isDone=\(story.isDone), text.isEmpty=\(String(story.text.characters).isEmpty)")
         return story
     }
-
+    
     // Temporarily removed suggestedTitle() due to potential dependency issues.
     /*
-    func suggestedTitle() async throws -> String? { ... }
-    */
+     func suggestedTitle() async throws -> String? { ... }
+     */
     
     // MARK: - AttributedString Formatting for Display
     

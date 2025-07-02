@@ -95,7 +95,7 @@ final class SpokenWordTranscriber: Sendable {
     // Use Locale.Language for translation
     var translationSourceLanguage: Locale.Language = .init(identifier: "en-US")
     var translationTargetLanguage: Locale.Language = .init(identifier: "zh-Hans")
-
+    
     // Transcribed text storage
     var volatileTranscript: AttributedString = ""
     var finalizedTranscript: AttributedString = ""
@@ -257,7 +257,7 @@ final class SpokenWordTranscriber: Sendable {
         
         print("finishTranscribing called. Story URL: \(story.wrappedValue.url?.absoluteString ?? "nil"), isDone: \(story.wrappedValue.isDone)")
         print("Final transcript before translation: '\(NSAttributedString(finalizedTranscript).string)'")
-
+        
         // 在转录完成时进行最终全量翻译，覆盖之前的增量翻译
         if !story.wrappedValue.isDone {
             print("Triggering final full translation from finishTranscribing")
@@ -403,8 +403,8 @@ final class SpokenWordTranscriber: Sendable {
                 // Handle TranslationSession lifecycle errors
                 let errorMessage = error.localizedDescription
                 if errorMessage.contains("TranslationSession after the view it was attached to has disappeared") ||
-                   errorMessage.contains("text session has already been cancelled") ||
-                   errorMessage.contains("CancellationError") {
+                    errorMessage.contains("text session has already been cancelled") ||
+                    errorMessage.contains("CancellationError") {
                     print("Translation cancelled due to session invalidation: \(errorMessage)")
                     Task { @MainActor in
                         self.translationSession = nil
@@ -529,8 +529,8 @@ final class SpokenWordTranscriber: Sendable {
                 // Handle TranslationSession lifecycle errors in final translation
                 let errorMessage = error.localizedDescription
                 if errorMessage.contains("TranslationSession after the view it was attached to has disappeared") ||
-                   errorMessage.contains("text session has already been cancelled") ||
-                   errorMessage.contains("CancellationError") {
+                    errorMessage.contains("text session has already been cancelled") ||
+                    errorMessage.contains("CancellationError") {
                     print("🔄 Final translation cancelled due to session invalidation: \(errorMessage)")
                     Task { @MainActor in
                         self.translationSession = nil
@@ -745,12 +745,12 @@ extension SpokenWordTranscriber {
         let supported = await SpeechTranscriber.supportedLocales
         return supported.map { $0.identifier }.contains(locale.identifier)
     }
-
+    
     func installed(locale: Locale) async -> Bool {
         let installed = await Set(SpeechTranscriber.installedLocales)
         return installed.map { $0.identifier }.contains(locale.identifier)
     }
-
+    
     func downloadIfNeeded(for module: SpeechTranscriber) async throws {
         if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
             self.downloadProgress = downloader.progress

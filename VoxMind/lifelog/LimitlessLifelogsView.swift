@@ -8,14 +8,14 @@ struct LimitlessLifelogsView: View {
     @State private var errorMessage: String? = nil
     @State private var showDatePicker = false
     @State private var selectedDate: Date? = nil
-
+    
     struct Lifelog: Identifiable, Decodable {
         let id: String
         let title: String
         let startTime: String?
         let isStarred: Bool?
     }
-
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // 顶部栏
@@ -61,7 +61,7 @@ struct LimitlessLifelogsView: View {
                 .disabled(isLoading)
             }
             .padding(.bottom, 2)
-
+            
             // 内容区
             if isLoading && lifelogs.isEmpty {
                 Spacer()
@@ -118,24 +118,24 @@ struct LimitlessLifelogsView: View {
         .background(Color(.systemBackground))
         .onAppear { loadLifelogs() }
     }
-
+    
     private func dateString(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
     }
-
+    
     private func loadLifelogs(for date: Date? = nil) {
         isLoading = true
         errorMessage = nil
-
+        
         let apiKey = UserDefaults.standard.string(forKey: "LimitlessAIAPIKey") ?? ""
         guard !apiKey.isEmpty else {
             errorMessage = "请先在设置中填写 Limitless API Key"
             isLoading = false
             return
         }
-
+        
         var urlString = "https://api.limitless.ai/v1/lifelogs?limit=20&includeMarkdown=false"
         if let date = date {
             urlString += "&date=\(dateString(date))"
@@ -145,7 +145,7 @@ struct LimitlessLifelogsView: View {
         request.httpMethod = "GET"
         request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-
+        
         URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 isLoading = false
@@ -177,7 +177,7 @@ struct LimitlessLifelogsView: View {
             }
         }.resume()
     }
-
+    
     struct LifelogsResponse: Decodable {
         let data: LifelogsData?
         struct LifelogsData: Decodable {

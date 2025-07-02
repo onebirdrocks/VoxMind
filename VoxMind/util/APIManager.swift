@@ -16,7 +16,7 @@ class APIManager: ObservableObject {
     @Published var validationStatus: ValidationStatus = .none
     
     // 存储每个提供商的验证状态
-
+    
     
     enum ValidationStatus {
         case none
@@ -40,7 +40,7 @@ class APIManager: ObservableObject {
         }
     }
     
-
+    
     
     init() {
         // 从 UserDefaults 加载保存的设置
@@ -162,6 +162,6 @@ class APIManager: ObservableObject {
         validationStatus = .none
     }
     
-
+    
 }
 

@@ -30,7 +30,7 @@ struct VoiceLogListView: View {
             }
         }
     }
-
+    
     
     // 停止所有音频播放的方法
     private func stopAllAudioPlayback() {

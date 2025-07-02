@@ -11,9 +11,9 @@ import Speech
 
 // 本地调试配置
 private func debugPrint(_ items: Any..., separator: String = " ", terminator: String = "\n") {
-    #if DEBUG
+#if DEBUG
     print(items.map { "\($0)" }.joined(separator: separator), terminator: terminator)
-    #endif
+#endif
 }
 
 class Recorder {
@@ -25,12 +25,12 @@ class Recorder {
     var story: Binding<VoiceLog>
     
     var file: AVAudioFile?
-
+    
     private(set) var isMicAuthorized = false
     
     // 添加音频级别回调支持  
     var audioLevelCallback: ((Float) -> Void)?
-
+    
     init(transcriber: SpokenWordTranscriber, story: Binding<VoiceLog>) {
         self.audioEngine = AVAudioEngine()
         self.transcriber = transcriber
@@ -50,7 +50,7 @@ class Recorder {
             isMicAuthorized = false
         }
     }
-
+    
     func record() async throws {
         // Generate a new unique URL for each recording
         let newURL = FileManager.default.temporaryDirectory
@@ -67,11 +67,11 @@ class Recorder {
                 throw NSError(domain: "Recorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone access denied."])
             }
         }
-
-        #if os(iOS)
+        
+#if os(iOS)
         try setUpAudioSession()
-        #endif
-
+#endif
+        
         try await transcriber.setUpTranscriber()
         
         for await inputBuffer in try await audioStream() {
@@ -99,10 +99,10 @@ class Recorder {
         outputContinuation = nil
         
         // 释放音频会话，确保麦克风指示器关闭
-        #if os(iOS)
+#if os(iOS)
         try deactivateAudioSession()
-        #endif
-
+#endif
+        
         // Close the recording file to ensure all data is written
         if let file = self.file {
             debugPrint("Recording file info before closing:")
@@ -113,11 +113,11 @@ class Recorder {
         
         // Set file to nil to close it
         self.file = nil
-
+        
         // Finish transcribing BEFORE setting isDone to true, so translation can still be triggered
         debugPrint("Finishing transcription before setting story.isDone...")
         try await transcriber.finishTranscribing()
-
+        
         debugPrint("Setting story.isDone to true")
         story.isDone.wrappedValue = true
         debugPrint("Story.url: \(story.url.wrappedValue?.absoluteString ?? "nil")")
@@ -136,21 +136,21 @@ class Recorder {
                 }
             }
         }
-
+        
         // Commenting out suggestedTitle() call as it might depend on unavailable dependencies
         // and was causing a compile error. Restore it if SystemLanguageModel is properly available.
         /*
-        Task {
-            do {
-                let suggestedTitle = try await story.wrappedValue.suggestedTitle()
-                if let title = suggestedTitle, !title.isEmpty {
-                    self.story.title.wrappedValue = title
-                }
-            } catch {
-                print("Could not suggest title: \(error)")
-            }
-        }
-        */
+         Task {
+         do {
+         let suggestedTitle = try await story.wrappedValue.suggestedTitle()
+         if let title = suggestedTitle, !title.isEmpty {
+         self.story.title.wrappedValue = title
+         }
+         } catch {
+         print("Could not suggest title: \(error)")
+         }
+         }
+         */
     }
     
     func pauseRecording() {
@@ -160,8 +160,8 @@ class Recorder {
     func resumeRecording() throws {
         try audioEngine.start()
     }
-
-    #if os(iOS)
+    
+#if os(iOS)
     private func setUpAudioSession() throws {
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP, .duckOthers])
@@ -173,7 +173,7 @@ class Recorder {
         try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         debugPrint("Audio session deactivated - microphone indicator should turn off")
     }
-    #endif
+#endif
     
     private func audioStream() async throws -> AsyncStream<AVAudioPCMBuffer> {
         try setupAudioEngine()
@@ -183,9 +183,9 @@ class Recorder {
         
         // 创建格式转换器以将输入格式转换为16kHz
         let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, 
-                                       sampleRate: 16000, 
-                                       channels: 1, 
-                                       interleaved: false)!
+                                         sampleRate: 16000, 
+                                         channels: 1, 
+                                         interleaved: false)!
         
         debugPrint("Target format: \(targetFormat)")
         
@@ -295,37 +295,37 @@ class Recorder {
     func playRecording() {
         // Use the story's URL to create a new file for reading
         guard let audioURL = story.url.wrappedValue else {
-                    debugPrint("Cannot play recording: no audio URL found.")
+            debugPrint("Cannot play recording: no audio URL found.")
             return
         }
         
-    debugPrint("Attempting to play recording from: \(audioURL.absoluteString)")
+        debugPrint("Attempting to play recording from: \(audioURL.absoluteString)")
         
-    // 异步加载音频文件，避免主线程阻塞
-    Task.detached(priority: .userInitiated) {
-        // Set up audio session for playback
-        #if os(iOS)
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            // 使用playAndRecord类别，这样可以避免与录制时的配置冲突
-            try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
-            try audioSession.setActive(true)
-            debugPrint("Audio session configured for playback")
-        } catch {
-            debugPrint("Failed to configure audio session for playback: \(error)")
-            return
-        }
-        #endif
-        
-        // Create a new audio file for reading
-        let playbackFile: AVAudioFile
-        do {
-            playbackFile = try AVAudioFile(forReading: audioURL)
-            debugPrint("Successfully opened audio file for playback with \(playbackFile.length) frames")
-        } catch {
-            debugPrint("Failed to open audio file for playback: \(error)")
-            return
-        }
+        // 异步加载音频文件，避免主线程阻塞
+        Task.detached(priority: .userInitiated) {
+            // Set up audio session for playback
+#if os(iOS)
+            do {
+                let audioSession = AVAudioSession.sharedInstance()
+                // 使用playAndRecord类别，这样可以避免与录制时的配置冲突
+                try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
+                try audioSession.setActive(true)
+                debugPrint("Audio session configured for playback")
+            } catch {
+                debugPrint("Failed to configure audio session for playback: \(error)")
+                return
+            }
+#endif
+            
+            // Create a new audio file for reading
+            let playbackFile: AVAudioFile
+            do {
+                playbackFile = try AVAudioFile(forReading: audioURL)
+                debugPrint("Successfully opened audio file for playback with \(playbackFile.length) frames")
+            } catch {
+                debugPrint("Failed to open audio file for playback: \(error)")
+                return
+            }
             
             // 在主线程设置播放
             await MainActor.run {
@@ -385,7 +385,7 @@ class Recorder {
             self.playerNode = nil
             
             // 尝试重新配置音频会话并重试一次
-            #if os(iOS)
+#if os(iOS)
             do {
                 let audioSession = AVAudioSession.sharedInstance()
                 try audioSession.setActive(false)
@@ -409,7 +409,7 @@ class Recorder {
             } catch {
                 DebugConfig.debugPrint("Retry also failed: \(error)")
             }
-            #endif
+#endif
         }
     }
     
@@ -423,7 +423,7 @@ class Recorder {
         }
         
         // 停止播放时恢复音频会话
-        #if os(iOS)
+#if os(iOS)
         do {
             let audioSession = AVAudioSession.sharedInstance()
             try audioSession.setActive(false)
@@ -431,7 +431,7 @@ class Recorder {
         } catch {
             print("Failed to deactivate audio session after playback: \(error)")
         }
-        #endif
+#endif
     }
     
     deinit {

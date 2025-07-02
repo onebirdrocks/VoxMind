@@ -85,9 +85,9 @@ struct OnboardingView: View {
                         )
                         .tag(4)
                     }
-                    #if os(iOS)
+#if os(iOS)
                     .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-                    #endif
+#endif
                     .animation(.easeInOut, value: currentPage)
                     
                     Spacer()
@@ -352,16 +352,16 @@ struct PermissionRequestView: View {
     private func requestPermission(at index: Int) {
         switch index {
         case 0: // 麦克风权限
-            #if os(iOS)
+#if os(iOS)
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
                 DispatchQueue.main.async {
                     microphoneGranted = granted
                 }
             }
-            #else
+#else
             // macOS 处理
             microphoneGranted = true
-            #endif
+#endif
         case 1: // 通知权限
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
                 DispatchQueue.main.async {
@@ -491,9 +491,9 @@ struct QuickTipsView: View {
                             .tag(index)
                     }
                 }
-                #if os(iOS)
+#if os(iOS)
                 .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-                #endif
+#endif
                 .frame(height: 300)
                 
                 // 页面指示器

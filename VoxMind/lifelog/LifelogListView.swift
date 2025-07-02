@@ -24,7 +24,7 @@ extension ModelContext {
             print("  - 完整信息: \(nsError)")
         }
     }
-
+    
     /// 更新指定日期的加载状态
     /// - Parameters:
     ///   - dateKey: 日期键值（格式：YYYY-MM-DD）
@@ -223,9 +223,9 @@ struct LifeLogListView: View {
         var currentTimeSlot: String?
         
         for lifelog in sortedLifelogs {
-            guard let startTime = lifelog.startTime else { 
+            guard let startTime = lifelog.startTime else {
                 print("⚠️ 跳过无时间的日志: \(lifelog.title)")
-                continue 
+                continue
             }
             
             let timeSlot = getTimeSlotFromString(startTime)
@@ -304,124 +304,124 @@ struct LifeLogListView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-                // 顶部栏
-                HStack {
-
-                    HStack(spacing: 16) {
-                        // 批量同步按钮（项链吊坠图标或同步图标）
-                        Button(action: { showBatchSync = true }) {
-                            ZStack {
-                                // 基础图标
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(isBatchSyncing ? .orange : .blue)
-                                
-                                // 进度圆环
-                                if isBatchSyncing {
-                                    Circle()
-                                        .trim(from: 0, to: syncProgress)
-                                        .stroke(Color.orange, lineWidth: 2)
-                                        .frame(width: 24, height: 24)
-                                        .rotationEffect(.degrees(-90))
-                                        .animation(.easeInOut(duration: 0.2), value: syncProgress)
-                                }
+            // 顶部栏
+            HStack {
+                
+                HStack(spacing: 16) {
+                    // 批量同步按钮（项链吊坠图标或同步图标）
+                    Button(action: { showBatchSync = true }) {
+                        ZStack {
+                            // 基础图标
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 18))
+                                .foregroundColor(isBatchSyncing ? .orange : .blue)
+                            
+                            // 进度圆环
+                            if isBatchSyncing {
+                                Circle()
+                                    .trim(from: 0, to: syncProgress)
+                                    .stroke(Color.orange, lineWidth: 2)
+                                    .frame(width: 24, height: 24)
+                                    .rotationEffect(.degrees(-90))
+                                    .animation(.easeInOut(duration: 0.2), value: syncProgress)
                             }
                         }
-                        .disabled(isBatchSyncing)
-                        
                     }
-                    Spacer() 
+                    .disabled(isBatchSyncing)
                     
-                    // 中间的日期显示
-                    Button(action: { showDatePicker = true }) {
-                        Text(dateDisplayString(selectedDate))
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                    }
-                    
-                    Spacer()
-                    
-                    // 右侧按钮组
-                    HStack(spacing: 16) {
-                        
-                        // 日历按钮
-                        Button(action: { showDatePicker = true }) {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 18))
-                                .foregroundColor(.blue)
-                        }
-                        
-                        // 刷新按钮
-                        Button(action: refreshLifelogs) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 18))
-                                .foregroundColor(.blue)
-                                .rotationEffect(.degrees(isLoading ? 360 : 0))
-                                .animation(isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isLoading)
-                        }
-                        .disabled(isLoading)
-                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.background)
+                Spacer()
                 
-                Divider()
+                // 中间的日期显示
+                Button(action: { showDatePicker = true }) {
+                    Text(dateDisplayString(selectedDate))
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                }
                 
-                // 主要内容区域
-                if isLoading && lifelogs.isEmpty {
-                    Spacer()
-                    ProgressView("正在加载...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                } else if let error = errorMessage {
-                    Spacer()
-                    VStack {
-                        Text("❌ 加载失败")
-                            .font(.headline)
-                            .foregroundColor(.red)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
+                Spacer()
+                
+                // 右侧按钮组
+                HStack(spacing: 16) {
+                    
+                    // 日历按钮
+                    Button(action: { showDatePicker = true }) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 18))
+                            .foregroundColor(.blue)
                     }
-                    Spacer()
-                } else if lifelogs.isEmpty {
-                    Spacer()
-                    VStack {
-                        Text("📝 暂无记录")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-                        Text("选择不同的日期查看记录")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    
+                    // 刷新按钮
+                    Button(action: refreshLifelogs) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 18))
+                            .foregroundColor(.blue)
+                            .rotationEffect(.degrees(isLoading ? 360 : 0))
+                            .animation(isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isLoading)
                     }
-                    Spacer()
-                } else {
-                    // 生活日志列表 - 时间轴视图
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(groupedLifelogs.enumerated()), id: \.offset) { index, timeGroup in
-                                TimelineGroupView(
-                                    timeGroup: timeGroup,
-                                    isFirst: index == 0,
-                                    isLast: index == groupedLifelogs.count - 1
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                    .refreshable {
-                        await refreshLifelogsAsync()
-                    }
+                    .disabled(isLoading)
                 }
             }
-            .background(.regularMaterial)
-            #if os(iOS)
-            .toolbar(.hidden, for: .navigationBar)
-            #endif
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.background)
+            
+            Divider()
+            
+            // 主要内容区域
+            if isLoading && lifelogs.isEmpty {
+                Spacer()
+                ProgressView("正在加载...")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else if let error = errorMessage {
+                Spacer()
+                VStack {
+                    Text("❌ 加载失败")
+                        .font(.headline)
+                        .foregroundColor(.red)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                Spacer()
+            } else if lifelogs.isEmpty {
+                Spacer()
+                VStack {
+                    Text("📝 暂无记录")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Text("选择不同的日期查看记录")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            } else {
+                // 生活日志列表 - 时间轴视图
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(groupedLifelogs.enumerated()), id: \.offset) { index, timeGroup in
+                            TimelineGroupView(
+                                timeGroup: timeGroup,
+                                isFirst: index == 0,
+                                isLast: index == groupedLifelogs.count - 1
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .refreshable {
+                    await refreshLifelogsAsync()
+                }
+            }
+        }
+        .background(.regularMaterial)
+#if os(iOS)
+        .toolbar(.hidden, for: .navigationBar)
+#endif
         .sheet(isPresented: $showDatePicker) {
             NavigationView {
                 VStack {
@@ -465,7 +465,7 @@ struct LifeLogListView: View {
                     Spacer()
                 }
                 .navigationTitle("选择日期")
-                #if os(iOS)
+#if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -474,7 +474,7 @@ struct LifeLogListView: View {
                         }
                     }
                 }
-                #else
+#else
                 .toolbar {
                     ToolbarItem(placement: .automatic) {
                         Button("取消") {
@@ -482,7 +482,7 @@ struct LifeLogListView: View {
                         }
                     }
                 }
-                #endif
+#endif
             }
             .presentationDetents([.medium, .large])
         }
@@ -782,7 +782,7 @@ struct LifelogCardView: View {
             }
         }
         .padding()
-         .background(.background)
+        .background(.background)
         .cornerRadius(10)
         .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
     }
@@ -874,10 +874,10 @@ struct ContentNodeView: View {
                 .foregroundColor(.blue)
                 .font(.system(size: 16, weight: .medium))
                 .frame(width: 20)
-                
+            
         case "heading2":
             if hasChildren {
-                Button(action: { 
+                Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isExpanded.toggle()
                     }
@@ -892,10 +892,10 @@ struct ContentNodeView: View {
                     .font(.system(size: 14, weight: .medium))
                     .frame(width: 20)
             }
-                
+            
         case "heading3":
             if hasChildren {
-                Button(action: { 
+                Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isExpanded.toggle()
                     }
@@ -910,19 +910,19 @@ struct ContentNodeView: View {
                     .font(.system(size: 14, weight: .medium))
                     .frame(width: 20)
             }
-                
+            
         case "blockquote":
             Image(systemName: "quote.bubble.fill")
                 .foregroundColor(.orange)
                 .font(.system(size: 14, weight: .medium))
                 .frame(width: 20)
-                
+            
         case "paragraph":
             Image(systemName: "text.alignleft")
                 .foregroundColor(.gray.opacity(0.7))
                 .font(.system(size: 13, weight: .regular))
                 .frame(width: 20)
-                
+            
         default:
             Image(systemName: "circle.fill")
                 .foregroundColor(.gray.opacity(0.5))
@@ -1273,7 +1273,7 @@ struct TimelineLifelogCardView: View {
                 Spacer()
                 
                 if !filteredContents.isEmpty {
-                    Button(action: { 
+                    Button(action: {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             isExpanded.toggle()
                         }
@@ -1486,9 +1486,9 @@ struct BatchSyncView: View {
                 .padding(.bottom)
             }
             .navigationTitle("批量同步")
-            #if os(iOS)
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            #endif
+#endif
         }
     }
     
@@ -1505,9 +1505,9 @@ struct BatchSyncView: View {
         syncStatusText = "准备同步..."
         
         // 获取时间范围
-        let (startDate, endDate) = selectedTimeRange == .custom 
-            ? (customStartDate, customEndDate) 
-            : selectedTimeRange.getDateRange()
+        let (startDate, endDate) = selectedTimeRange == .custom
+        ? (customStartDate, customEndDate)
+        : selectedTimeRange.getDateRange()
         
         // 生成日期列表
         var dates: [Date] = []
